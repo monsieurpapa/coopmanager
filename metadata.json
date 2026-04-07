@@ -1,0 +1,5 @@
+{
+  "name": "Cooppro: Coffee Cooperative Visualizer",
+  "description": "Interactive visualization and comparison tool for coffee cooperative profiles, featuring production metrics, sustainability data, and sensory profiles.",
+  "requestFramePermissions": []
+}

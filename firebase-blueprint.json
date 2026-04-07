@@ -1,0 +1,76 @@
+{
+  "entities": {
+    "User": {
+      "title": "User Profile",
+      "description": "Stores user roles and cooperative associations.",
+      "type": "object",
+      "properties": {
+        "email": { "type": "string", "format": "email" },
+        "displayName": { "type": "string" },
+        "phoneNumber": { "type": "string" },
+        "bio": { "type": "string" },
+        "role": { "type": "string", "enum": ["admin", "coop_manager", "user"] },
+        "cooperativeId": { "type": "string", "description": "ID of the cooperative managed by this user." }
+      },
+      "required": ["email", "role"]
+    },
+    "Cooperative": {
+      "title": "Coffee Cooperative",
+      "description": "Detailed profile of a coffee cooperative.",
+      "type": "object",
+      "properties": {
+        "name": { "type": "string" },
+        "country": { "type": "string" },
+        "region": { "type": "string" },
+        "established": { "type": "integer" },
+        "members": { "type": "integer" },
+        "menMembers": { "type": "integer" },
+        "womenMembers": { "type": "integer" },
+        "youthMembers": { "type": "integer" },
+        "altitudeRange": { "type": "array", "items": { "type": "integer" } },
+        "varieties": { "type": "array", "items": { "type": "string" } },
+        "processingMethods": { "type": "array", "items": { "type": "string" } },
+        "certifications": { "type": "array", "items": { "type": "string" } },
+        "annualProduction": { "type": "number" },
+        "averageCuppingScore": { "type": "number" },
+        "description": { "type": "string" },
+        "sustainabilityFocus": { "type": "array", "items": { "type": "string" } },
+        "areaHa": { "type": "number" },
+        "treeCount": { "type": "integer" },
+        "households": { "type": "integer" },
+        "managerEmail": { "type": "string", "format": "email" },
+        "imageUrl": { "type": "string" },
+        "logoUrl": { "type": "string" },
+        "lastUpdated": { "type": "string", "format": "date-time" }
+      },
+      "required": ["name", "country", "region", "members"]
+    },
+    "StagingCooperative": {
+      "title": "Staging Cooperative",
+      "description": "Temporary storage for parsed cooperative data awaiting review.",
+      "type": "object",
+      "properties": {
+        "data": { "$ref": "Cooperative" },
+        "managerEmail": { "type": "string", "format": "email" },
+        "status": { "type": "string", "enum": ["pending", "approved", "rejected"] },
+        "uploadedBy": { "type": "string" },
+        "createdAt": { "type": "string", "format": "date-time" }
+      },
+      "required": ["data", "status", "uploadedBy", "createdAt"]
+    }
+  },
+  "firestore": {
+    "/users/{userId}": {
+      "schema": "User",
+      "description": "User profiles and roles."
+    },
+    "/cooperatives/{coopId}": {
+      "schema": "Cooperative",
+      "description": "Live cooperative profiles."
+    },
+    "/staging_cooperatives/{stagingId}": {
+      "schema": "StagingCooperative",
+      "description": "Cooperatives awaiting admin review."
+    }
+  }
+}
