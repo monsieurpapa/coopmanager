@@ -64,8 +64,10 @@ export const parseCooperativeProfile = async (base64Data: string, mimeType: stri
     },
   });
 
+  const text = response.text;
+  if (!text) throw new Error("Empty response from AI");
   try {
-    return JSON.parse(response.text);
+    return JSON.parse(text);
   } catch (e) {
     console.error("Failed to parse Gemini response", e);
     throw new Error("Invalid response format from AI");

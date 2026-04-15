@@ -22,6 +22,7 @@ import { useForm, useFieldArray } from 'react-hook-form';
 import { zodResolver } from '@hookform/resolvers/zod';
 import * as z from 'zod';
 import Markdown from 'react-markdown';
+import toast, { Toaster } from 'react-hot-toast';
 
 // --- Error Handling ---
 enum OperationType {
@@ -518,7 +519,7 @@ const SensoryRadar = ({ profile, name }: { profile: any, name: string }) => {
   );
 };
 
-const ComparisonView = ({ selectedIds, onRemove, onAdd }: { selectedIds: string[], onRemove: (id: string) => void, onAdd: (id: string) => void }) => {
+const ComparisonView = ({ selectedIds, onRemove, onAdd, cooperatives }: { selectedIds: string[], onRemove: (id: string) => void, onAdd: (id: string) => void, cooperatives: CoffeeCooperative[] }) => {
   const { t } = useTranslation();
   const [selectedMetrics, setSelectedMetrics] = useState<string[]>(['averageCuppingScore', 'annualProduction']);
   const [isCoopDropdownOpen, setIsCoopDropdownOpen] = useState(false);
@@ -541,9 +542,9 @@ const ComparisonView = ({ selectedIds, onRemove, onAdd }: { selectedIds: string[
     return () => document.removeEventListener('mousedown', handleClickOutside);
   }, []);
 
-  const selectedCoops = useMemo(() => 
-    MOCK_COOPERATIVES.filter(c => selectedIds.includes(c.id)),
-    [selectedIds]
+  const selectedCoops = useMemo(() =>
+    cooperatives.filter(c => selectedIds.includes(c.id)),
+    [selectedIds, cooperatives]
   );
 
   const availableMetrics = [
@@ -571,7 +572,7 @@ const ComparisonView = ({ selectedIds, onRemove, onAdd }: { selectedIds: string[
     );
   };
 
-  const filteredCoops = MOCK_COOPERATIVES.filter(c => 
+  const filteredCoops = cooperatives.filter(c =>
     c.name.toLowerCase().includes(coopSearch.toLowerCase())
   );
 
@@ -615,7 +616,7 @@ const ComparisonView = ({ selectedIds, onRemove, onAdd }: { selectedIds: string[
             <label className="text-[10px] font-black text-stone-400 uppercase tracking-widest">{t('selectCooperatives')}</label>
             <div className="flex gap-4">
               <button 
-                onClick={() => MOCK_COOPERATIVES.slice(0, 4).forEach(c => onAdd(c.id))}
+                onClick={() => cooperatives.slice(0, 4).forEach(c => onAdd(c.id))}
                 className="text-[10px] font-bold text-amber-600 hover:text-amber-700 uppercase tracking-widest"
               >
                 {t('selectTop4')}
@@ -1306,11 +1307,11 @@ function CoopPortal({ coopId, isNew = false, onComplete }: { coopId?: string, is
           lastUpdated: serverTimestamp()
         });
       }
-      alert(t('success'));
+      toast.success(t('success'));
       if (onComplete) onComplete();
     } catch (error) {
       console.error("Error saving coop", error);
-      alert(t('error'));
+      toast.error(t('error'));
     }
   };
 
@@ -1346,14 +1347,15 @@ function CoopPortal({ coopId, isNew = false, onComplete }: { coopId?: string, is
           <button 
             type="button"
             onClick={async () => {
+              if (!coopId) return;
               if (window.confirm(t('confirmDelete'))) {
                 try {
                   await deleteDoc(doc(db, 'cooperatives', coopId));
-                  alert(t('success'));
+                  toast.success(t('success'));
                   window.location.reload();
                 } catch (error) {
                   console.error("Error deleting coop", error);
-                  alert(t('error'));
+                  toast.error(t('error'));
                 }
               }
             }}
@@ -1630,7 +1632,9 @@ function AppContent() {
   const [userProfile, setUserProfile] = useState<any>(null);
   const [isProfileLoading, setIsProfileLoading] = useState(true);
   const [portalCoopId, setPortalCoopId] = useState<string | null>(null);
-  const [cooperatives, setCooperatives] = useState<CoffeeCooperative[]>(MOCK_COOPERATIVES);
+  const [cooperatives, setCooperatives] = useState<CoffeeCooperative[]>(
+    import.meta.env.DEV ? MOCK_COOPERATIVES : []
+  );
 
   useEffect(() => {
     const unsubscribe = onAuthStateChanged(auth, async (u) => {
@@ -1682,8 +1686,10 @@ function AppContent() {
     const path = 'cooperatives';
     const unsubscribe = onSnapshot(collection(db, 'cooperatives'), (snapshot) => {
       const dbCoops = snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() } as CoffeeCooperative));
-      if (dbCoops.length > 0) {
+      if (import.meta.env.DEV) {
         setCooperatives([...MOCK_COOPERATIVES, ...dbCoops]);
+      } else {
+        setCooperatives(dbCoops);
       }
     }, (error) => {
       handleFirestoreError(error, OperationType.LIST, path);
@@ -1718,6 +1724,7 @@ function AppContent() {
 
   return (
     <div className="min-h-screen bg-[#faf9f6] text-stone-900 font-sans selection:bg-amber-100">
+      <Toaster position="bottom-right" toastOptions={{ duration: 4000 }} />
       {/* Header */}
       <header className="sticky top-0 z-40 bg-white/80 backdrop-blur-md border-b border-stone-200">
         <div className="max-w-7xl mx-auto px-4 h-16 flex items-center justify-between">
@@ -1838,10 +1845,11 @@ function AppContent() {
               </button>
             </div>
             
-            <ComparisonView 
-              selectedIds={comparisonIds} 
-              onRemove={(id) => setComparisonIds(prev => prev.filter(i => i !== id))} 
+            <ComparisonView
+              selectedIds={comparisonIds}
+              onRemove={(id) => setComparisonIds(prev => prev.filter(i => i !== id))}
               onAdd={(id) => setComparisonIds(prev => [...prev, id].slice(-4))}
+              cooperatives={cooperatives}
             />
           </motion.div>
         ) : currentView === 'staging' ? (
@@ -1992,11 +2000,11 @@ function AppContent() {
                                   if (window.confirm(t('confirmDelete'))) {
                                     try {
                                       await deleteDoc(doc(db, 'cooperatives', selectedCoop.id));
-                                      alert(t('success'));
+                                      toast.success(t('success'));
                                       setSelectedCoopId(null);
                                     } catch (error) {
                                       console.error("Error deleting coop", error);
-                                      alert(t('error'));
+                                      toast.error(t('error'));
                                     }
                                   }
                                 }}
@@ -2013,7 +2021,7 @@ function AppContent() {
                                     const docRef = doc(db, 'users', user.uid);
                                     await updateDoc(docRef, { cooperativeId: selectedCoop.id });
                                     setUserProfile({ ...userProfile, cooperativeId: selectedCoop.id });
-                                    alert(`Success! You are now the manager of ${selectedCoop.name}. The Cooperative Portal is now accessible in the navigation bar.`);
+                                    toast.success(`You are now the manager of ${selectedCoop.name}. The Cooperative Portal is now accessible in the navigation bar.`);
                                   }}
                                   className="flex items-center gap-2 px-4 py-2 bg-amber-600 text-white rounded-xl text-xs font-bold hover:bg-amber-700 transition-all shadow-lg"
                                 >
