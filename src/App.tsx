@@ -409,7 +409,7 @@ const LanguageSwitcher = () => {
       <button 
         onClick={() => setLang('en')}
         className={cn(
-          "px-3 py-1 text-[10px] font-black uppercase tracking-widest rounded-md transition-all",
+          "px-3 py-2 min-h-[44px] text-[10px] font-black uppercase tracking-widest rounded-md transition-all flex items-center",
           lang === 'en' ? "bg-white text-amber-900 shadow-sm" : "text-stone-400 hover:text-stone-600"
         )}
       >
@@ -418,7 +418,7 @@ const LanguageSwitcher = () => {
       <button 
         onClick={() => setLang('fr')}
         className={cn(
-          "px-3 py-1 text-[10px] font-black uppercase tracking-widest rounded-md transition-all",
+          "px-3 py-2 min-h-[44px] text-[10px] font-black uppercase tracking-widest rounded-md transition-all flex items-center",
           lang === 'fr' ? "bg-white text-amber-900 shadow-sm" : "text-stone-400 hover:text-stone-600"
         )}
       >
