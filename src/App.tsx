@@ -428,6 +428,12 @@ const LanguageSwitcher = () => {
   );
 };
 
+// --- Image fallback helpers ---
+const LOGO_FALLBACK = "data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='48' height='48' viewBox='0 0 48 48'%3E%3Crect width='48' height='48' rx='8' fill='%23f5f5f4'/%3E%3Ccircle cx='24' cy='19' r='7' fill='%23a8a29e'/%3E%3Cellipse cx='24' cy='36' rx='12' ry='7' fill='%23a8a29e'/%3E%3C/svg%3E";
+const IMAGE_FALLBACK = "data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='800' height='600' viewBox='0 0 800 600'%3E%3Crect width='800' height='600' fill='%23e7e5e4'/%3E%3Ctext x='50%25' y='50%25' dominant-baseline='middle' text-anchor='middle' font-family='sans-serif' font-size='24' fill='%2378716c'%3ECoffee Cooperative%3C/text%3E%3C/svg%3E";
+const onLogoError = (e: React.SyntheticEvent<HTMLImageElement>) => { e.currentTarget.src = LOGO_FALLBACK; };
+const onImageError = (e: React.SyntheticEvent<HTMLImageElement>) => { e.currentTarget.src = IMAGE_FALLBACK; };
+
 // --- Components ---
 
 const StatCard = ({ icon: Icon, label, value, unit = "" }: { icon: any, label: string, value: string | number, unit?: string }) => (
@@ -451,7 +457,7 @@ const HoverSummary = ({ coop, onCompare, isComparing }: { coop: CoffeeCooperativ
       className="absolute z-50 left-full ml-4 top-0 w-64 bg-white p-4 rounded-2xl shadow-2xl border border-stone-200"
     >
       <div className="flex items-center gap-3 mb-3">
-        <img src={coop.logoUrl} alt="" className="w-10 h-10 rounded-lg object-cover border border-stone-100" referrerPolicy="no-referrer" />
+        <img src={coop.logoUrl} alt="" className="w-10 h-10 rounded-lg object-cover border border-stone-100" referrerPolicy="no-referrer" onError={onLogoError} />
         <div>
           <h4 className="font-bold text-stone-900 text-sm leading-tight">{coop.name}</h4>
           <p className="text-[10px] text-stone-500">{coop.region}</p>
@@ -632,7 +638,7 @@ const ComparisonView = ({ selectedIds, onRemove, onAdd }: { selectedIds: string[
               selectedCoops.map(c => (
                 <div key={c.id} className="relative group/tag">
                   <span className="inline-flex items-center gap-1.5 px-2.5 py-1 bg-stone-100 text-stone-900 text-xs font-bold rounded-lg border border-stone-200 hover:bg-stone-200 transition-colors">
-                    <img src={c.logoUrl} alt="" className="w-4 h-4 rounded-sm object-cover" />
+                    <img src={c.logoUrl} alt="" className="w-4 h-4 rounded-sm object-cover" onError={onLogoError} />
                     {c.name}
                     <button 
                       onClick={(e) => { e.stopPropagation(); onRemove(c.id); }}
@@ -693,7 +699,7 @@ const ComparisonView = ({ selectedIds, onRemove, onAdd }: { selectedIds: string[
                       )}>
                         {selectedIds.includes(coop.id) && <X size={10} className="text-white" />}
                       </div>
-                      <img src={coop.logoUrl} alt="" className="w-6 h-6 rounded object-cover" />
+                      <img src={coop.logoUrl} alt="" className="w-6 h-6 rounded object-cover" onError={onLogoError} />
                       <span className="text-sm font-bold text-stone-900">{coop.name}</span>
                     </div>
                   ))}
@@ -807,7 +813,7 @@ const ComparisonView = ({ selectedIds, onRemove, onAdd }: { selectedIds: string[
             return (
               <div key={mId} className="bg-white p-4 rounded-2xl border border-stone-200 shadow-sm flex items-center gap-4">
                 <div className="w-10 h-10 rounded-xl overflow-hidden border border-stone-100 shrink-0">
-                  <img src={topCoop.logoUrl} alt="" className="w-full h-full object-cover" />
+                  <img src={topCoop.logoUrl} alt="" className="w-full h-full object-cover" onError={onLogoError} />
                 </div>
                 <div>
                   <p className="text-[8px] font-black text-stone-400 uppercase tracking-widest leading-none mb-1">Top {metric.label}</p>
@@ -904,7 +910,7 @@ const ComparisonView = ({ selectedIds, onRemove, onAdd }: { selectedIds: string[
                   {selectedCoops.map(c => (
                     <th key={c.id} className="px-8 py-4 border-b border-stone-100">
                       <div className="flex items-center gap-2">
-                        <img src={c.logoUrl} alt="" className="w-6 h-6 rounded object-cover border border-stone-200" />
+                        <img src={c.logoUrl} alt="" className="w-6 h-6 rounded object-cover border border-stone-200" onError={onLogoError} />
                         <span className="text-sm font-black text-stone-900">{c.name}</span>
                       </div>
                     </th>
@@ -1881,11 +1887,12 @@ function AppContent() {
                     onClick={() => setSelectedCoopId(coop.id)}
                   >
                     <div className="flex items-start gap-4">
-                      <img 
-                        src={coop.logoUrl} 
-                        alt="" 
+                      <img
+                        src={coop.logoUrl}
+                        alt=""
                         className="w-12 h-12 rounded-xl object-cover border border-stone-100"
                         referrerPolicy="no-referrer"
+                        onError={onLogoError}
                       />
                       <div className="flex-1">
                         <div className="flex items-center gap-2 mb-1">
@@ -1945,11 +1952,12 @@ function AppContent() {
                   >
                     {/* Hero */}
                     <div className="relative h-64 rounded-3xl overflow-hidden group">
-                      <img 
-                        src={selectedCoop.imageUrl} 
+                      <img
+                        src={selectedCoop.imageUrl}
                         alt={selectedCoop.name}
                         className="w-full h-full object-cover transition-transform duration-700 group-hover:scale-105"
                         referrerPolicy="no-referrer"
+                        onError={onImageError}
                       />
                       <div className="absolute inset-0 bg-gradient-to-t from-black/80 via-black/20 to-transparent" />
                       <div className="absolute bottom-0 left-0 p-8 flex items-end justify-between w-full">
