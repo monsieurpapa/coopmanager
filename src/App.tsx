@@ -1857,7 +1857,7 @@ function AppContent() {
             {/* Sidebar List */}
             <div className="lg:col-span-4 space-y-4">
               <div className="flex items-center justify-between mb-4">
-                <h2 className="text-sm font-bold text-stone-400 uppercase tracking-widest">{t('cooperatives')}</h2>
+                <p className="text-xs font-black text-stone-400 uppercase tracking-widest">{t('cooperatives')}</p>
                 {userProfile?.role === 'admin' && (
                   <button 
                     onClick={() => {
