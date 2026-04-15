@@ -851,6 +851,12 @@ const ComparisonView = ({ selectedIds, onRemove, onAdd }: { selectedIds: string[
               </div>
               
               <div className="h-[250px]">
+                {selectedCoops.length === 0 ? (
+                  <div className="h-full flex flex-col items-center justify-center text-stone-300 gap-2">
+                    <Scale size={28} />
+                    <p className="text-xs font-bold text-stone-400">Select cooperatives above to compare</p>
+                  </div>
+                ) : (
                 <ResponsiveContainer width="100%" height="100%">
                   <BarChart data={chartData} margin={{ top: 10, right: 30, left: 0, bottom: 0 }}>
                     <CartesianGrid strokeDasharray="3 3" vertical={false} stroke="#f3f4f6" />
@@ -877,6 +883,7 @@ const ComparisonView = ({ selectedIds, onRemove, onAdd }: { selectedIds: string[
                     </Bar>
                   </BarChart>
                 </ResponsiveContainer>
+                )}
               </div>
             </motion.div>
           );
