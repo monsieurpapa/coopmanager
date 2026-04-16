@@ -900,6 +900,8 @@ function StagingArea() {
 }
 
 // --- Cooperative Portal Component ---
+const TOTAL_STEPS = 4;
+
 function CoopPortal({ coopId, isNew = false, onComplete }: { coopId?: string, isNew?: boolean, onComplete?: () => void }) {
   const { t } = useTranslation();
   const [coop, setCoop] = useState<any>(isNew ? {
@@ -914,6 +916,13 @@ function CoopPortal({ coopId, isNew = false, onComplete }: { coopId?: string, is
     established: new Date().getFullYear()
   } : null);
   const [step, setStep] = useState(1);
+
+  // Comma-separated text state for array fields (Zod schema expects arrays)
+  const [varietiesText, setVarietiesText] = useState('');
+  const [processingsText, setProcessingsText] = useState('');
+  const [certsText, setCertsText] = useState('');
+  const [sustainabilityText, setSustainabilityText] = useState('');
+
   const { register, handleSubmit, reset, formState: { errors } } = useForm<CooperativeFormData>({
     resolver: zodResolver(CooperativeSchema),
     defaultValues: isNew ? {
@@ -924,6 +933,8 @@ function CoopPortal({ coopId, isNew = false, onComplete }: { coopId?: string, is
       annualProduction: 0,
       sensoryProfile: { aroma: 0, acidity: 0, body: 0, sweetness: 0, aftertaste: 0 },
       varieties: [],
+      processingMethods: [],
+      certifications: [],
       sustainabilityFocus: [],
       established: new Date().getFullYear()
     } : undefined
@@ -936,12 +947,16 @@ function CoopPortal({ coopId, isNew = false, onComplete }: { coopId?: string, is
       return;
     }
     const path = `cooperatives/${coopId}`;
-    return onSnapshot(doc(db, 'cooperatives', coopId), (doc) => {
-      if (doc.exists()) {
-        setCoop(doc.data());
-        reset(doc.data() as any);
+    return onSnapshot(doc(db, 'cooperatives', coopId), (snap) => {
+      if (snap.exists()) {
+        const data = snap.data();
+        setCoop(data);
+        reset(data as any);
+        setVarietiesText((data.varieties ?? []).join(', '));
+        setProcessingsText((data.processingMethods ?? []).join(', '));
+        setCertsText((data.certifications ?? []).join(', '));
+        setSustainabilityText((data.sustainabilityFocus ?? []).join(', '));
       } else {
-        // If document doesn't exist, we should probably handle it
         console.warn(`Cooperative ${coopId} not found`);
         setCoop({ name: 'Not Found', country: '', region: '', members: 0 });
       }
@@ -950,18 +965,22 @@ function CoopPortal({ coopId, isNew = false, onComplete }: { coopId?: string, is
     });
   }, [coopId, reset, isNew]);
 
+  const parseCSV = (text: string) => text.split(',').map(s => s.trim()).filter(Boolean);
+
   const onSubmit = async (data: CooperativeFormData) => {
     try {
+      const payload = {
+        ...data,
+        varieties: parseCSV(varietiesText),
+        processingMethods: parseCSV(processingsText),
+        certifications: parseCSV(certsText),
+        sustainabilityFocus: parseCSV(sustainabilityText),
+        lastUpdated: serverTimestamp(),
+      };
       if (isNew) {
-        await addDoc(collection(db, 'cooperatives'), {
-          ...data,
-          lastUpdated: serverTimestamp()
-        });
+        await addDoc(collection(db, 'cooperatives'), payload);
       } else if (coopId) {
-        await updateDoc(doc(db, 'cooperatives', coopId), {
-          ...data,
-          lastUpdated: serverTimestamp()
-        });
+        await updateDoc(doc(db, 'cooperatives', coopId), payload);
       }
       toast.success(t('success'));
       if (onComplete) onComplete();
@@ -970,6 +989,9 @@ function CoopPortal({ coopId, isNew = false, onComplete }: { coopId?: string, is
       toast.error(t('error'));
     }
   };
+
+  const inputClass = "w-full p-3 bg-stone-50 border border-stone-200 rounded-xl focus:ring-2 focus:ring-amber-500 outline-none text-sm";
+  const labelClass = "text-xs font-bold text-stone-400 uppercase tracking-wide";
 
   if (!coop) return <div className="p-12 text-center"><Loader2 className="animate-spin mx-auto" /></div>;
 
@@ -987,8 +1009,8 @@ function CoopPortal({ coopId, isNew = false, onComplete }: { coopId?: string, is
 
       <div className="bg-white p-8 rounded-3xl border border-stone-200 shadow-sm">
         <div className="flex items-center justify-between mb-8">
-          <div className="flex items-center gap-4">
-            {[1, 2, 3].map((s) => (
+          <div className="flex items-center gap-3">
+            {Array.from({ length: TOTAL_STEPS }, (_, i) => i + 1).map((s) => (
               <div key={s} className="flex items-center gap-2">
                 <div className={cn(
                   "w-8 h-8 rounded-full flex items-center justify-center text-xs font-bold transition-all",
@@ -996,80 +1018,201 @@ function CoopPortal({ coopId, isNew = false, onComplete }: { coopId?: string, is
                 )}>
                   {step > s ? <Check size={14} /> : s}
                 </div>
-                {s < 3 && <div className="w-8 h-px bg-stone-100" />}
+                {s < TOTAL_STEPS && <div className="w-6 h-px bg-stone-100" />}
               </div>
             ))}
           </div>
-          <button 
-            type="button"
-            onClick={async () => {
-              if (!coopId) return;
-              if (window.confirm(t('confirmDelete'))) {
-                try {
-                  await deleteDoc(doc(db, 'cooperatives', coopId));
-                  toast.success(t('success'));
-                  window.location.reload();
-                } catch (error) {
-                  console.error("Error deleting coop", error);
-                  toast.error(t('error'));
+          {!isNew && (
+            <button
+              type="button"
+              onClick={async () => {
+                if (!coopId) return;
+                if (window.confirm(t('confirmDelete'))) {
+                  try {
+                    await deleteDoc(doc(db, 'cooperatives', coopId));
+                    toast.success(t('success'));
+                    window.location.reload();
+                  } catch (error) {
+                    console.error("Error deleting coop", error);
+                    toast.error(t('error'));
+                  }
                 }
-              }
-            }}
-            className="flex items-center gap-2 px-4 py-2 text-red-500 hover:bg-red-50 rounded-xl text-xs font-bold transition-all"
-          >
-            <Trash2 size={14} /> {t('deleteCooperative')}
-          </button>
+              }}
+              className="flex items-center gap-2 px-4 py-2 text-red-500 hover:bg-red-50 rounded-xl text-xs font-bold transition-all"
+            >
+              <Trash2 size={14} /> {t('deleteCooperative')}
+            </button>
+          )}
         </div>
 
         <form onSubmit={handleSubmit(onSubmit)} className="space-y-6">
+          {/* Step 1: Identity */}
           {step === 1 && (
             <motion.div initial={{ opacity: 0 }} animate={{ opacity: 1 }} className="space-y-4">
               <h3 className="text-lg font-bold">{t('overview')}</h3>
               <div className="grid grid-cols-2 gap-4">
                 <div className="space-y-1">
-                  <label className="text-xs font-bold text-stone-400 uppercase">Cooperative Name</label>
-                  <input {...register('name')} className="w-full p-3 bg-stone-50 border border-stone-200 rounded-xl focus:ring-2 focus:ring-amber-500 outline-none" />
+                  <label className={labelClass}>Cooperative Name *</label>
+                  <input {...register('name')} className={inputClass} />
+                  {errors.name && <p className="text-red-500 text-xs">{errors.name.message}</p>}
                 </div>
                 <div className="space-y-1">
-                  <label className="text-xs font-bold text-stone-400 uppercase">Country</label>
-                  <input {...register('country')} className="w-full p-3 bg-stone-50 border border-stone-200 rounded-xl focus:ring-2 focus:ring-amber-500 outline-none" />
+                  <label className={labelClass}>Country *</label>
+                  <input {...register('country')} className={inputClass} />
+                  {errors.country && <p className="text-red-500 text-xs">{errors.country.message}</p>}
+                </div>
+              </div>
+              <div className="grid grid-cols-2 gap-4">
+                <div className="space-y-1">
+                  <label className={labelClass}>Region *</label>
+                  <input {...register('region')} className={inputClass} placeholder="e.g. Sud-Kivu" />
+                  {errors.region && <p className="text-red-500 text-xs">{errors.region.message}</p>}
+                </div>
+                <div className="space-y-1">
+                  <label className={labelClass}>Year Established</label>
+                  <input type="number" {...register('established', { valueAsNumber: true })} className={inputClass} placeholder="e.g. 2019" />
+                </div>
+              </div>
+              <div className="grid grid-cols-2 gap-4">
+                <div className="space-y-1">
+                  <label className={labelClass}>Commodity</label>
+                  <select {...register('commodity')} className={inputClass}>
+                    <option value="">-- select --</option>
+                    <option value="coffee">Coffee</option>
+                    <option value="cocoa">Cocoa</option>
+                  </select>
+                </div>
+                <div className="space-y-1">
+                  <label className={labelClass}>Manager Email</label>
+                  <input type="email" {...register('managerEmail')} className={inputClass} placeholder="manager@example.com" />
+                </div>
+              </div>
+              <div className="grid grid-cols-2 gap-4">
+                <div className="space-y-1">
+                  <label className={labelClass}>Image URL</label>
+                  <input {...register('imageUrl')} className={inputClass} placeholder="https://..." />
+                </div>
+                <div className="space-y-1">
+                  <label className={labelClass}>Logo URL</label>
+                  <input {...register('logoUrl')} className={inputClass} placeholder="https://..." />
                 </div>
               </div>
               <div className="space-y-1">
-                <label className="text-xs font-bold text-stone-400 uppercase">Description</label>
-                <textarea {...register('description')} rows={4} className="w-full p-3 bg-stone-50 border border-stone-200 rounded-xl focus:ring-2 focus:ring-amber-500 outline-none" />
+                <label className={labelClass}>Description</label>
+                <textarea {...register('description')} rows={4} className={inputClass} />
               </div>
             </motion.div>
           )}
 
+          {/* Step 2: Members & Impact */}
           {step === 2 && (
+            <motion.div initial={{ opacity: 0 }} animate={{ opacity: 1 }} className="space-y-4">
+              <h3 className="text-lg font-bold">{t('memberDemographics')}</h3>
+              <div className="grid grid-cols-2 gap-4">
+                <div className="space-y-1">
+                  <label className={labelClass}>Total Members *</label>
+                  <input type="number" {...register('members', { valueAsNumber: true })} className={inputClass} />
+                  {errors.members && <p className="text-red-500 text-xs">{errors.members.message}</p>}
+                </div>
+                <div className="space-y-1">
+                  <label className={labelClass}>Households</label>
+                  <input type="number" {...register('households', { valueAsNumber: true })} className={inputClass} />
+                </div>
+              </div>
+              <div className="grid grid-cols-3 gap-4">
+                <div className="space-y-1">
+                  <label className={labelClass}>Men Members</label>
+                  <input type="number" {...register('menMembers', { valueAsNumber: true })} className={inputClass} />
+                </div>
+                <div className="space-y-1">
+                  <label className={labelClass}>Women Members</label>
+                  <input type="number" {...register('womenMembers', { valueAsNumber: true })} className={inputClass} />
+                </div>
+                <div className="space-y-1">
+                  <label className={labelClass}>Youth Members</label>
+                  <input type="number" {...register('youthMembers', { valueAsNumber: true })} className={inputClass} />
+                </div>
+              </div>
+              <div className="grid grid-cols-2 gap-4">
+                <div className="space-y-1">
+                  <label className={labelClass}>Area (ha)</label>
+                  <input type="number" step="0.1" {...register('areaHa', { valueAsNumber: true })} className={inputClass} />
+                </div>
+                <div className="space-y-1">
+                  <label className={labelClass}>Tree Count</label>
+                  <input type="number" {...register('treeCount', { valueAsNumber: true })} className={inputClass} />
+                </div>
+              </div>
+            </motion.div>
+          )}
+
+          {/* Step 3: Production & Quality */}
+          {step === 3 && (
             <motion.div initial={{ opacity: 0 }} animate={{ opacity: 1 }} className="space-y-4">
               <h3 className="text-lg font-bold">{t('productionStats')}</h3>
               <div className="grid grid-cols-2 gap-4">
                 <div className="space-y-1">
-                  <label className="text-xs font-bold text-stone-400 uppercase">Total Members</label>
-                  <input type="number" {...register('members', { valueAsNumber: true })} className="w-full p-3 bg-stone-50 border border-stone-200 rounded-xl focus:ring-2 focus:ring-amber-500 outline-none" />
+                  <label className={labelClass}>Annual Production (Tons)</label>
+                  <input type="number" step="0.1" {...register('annualProduction', { valueAsNumber: true })} className={inputClass} />
                 </div>
                 <div className="space-y-1">
-                  <label className="text-xs font-bold text-stone-400 uppercase">Annual Production (Tons)</label>
-                  <input type="number" step="0.1" {...register('annualProduction', { valueAsNumber: true })} className="w-full p-3 bg-stone-50 border border-stone-200 rounded-xl focus:ring-2 focus:ring-amber-500 outline-none" />
+                  <label className={labelClass}>Self-Reported Cupping Score</label>
+                  <input type="number" step="0.1" min="0" max="100" {...register('selfReportedCuppingScore', { valueAsNumber: true })} className={inputClass} />
                 </div>
+              </div>
+              <div className="grid grid-cols-2 gap-4">
+                <div className="space-y-1">
+                  <label className={labelClass}>Altitude Min (m)</label>
+                  <input type="number" {...register('altitudeRange.0', { valueAsNumber: true })} className={inputClass} placeholder="e.g. 1450" />
+                </div>
+                <div className="space-y-1">
+                  <label className={labelClass}>Altitude Max (m)</label>
+                  <input type="number" {...register('altitudeRange.1', { valueAsNumber: true })} className={inputClass} placeholder="e.g. 1800" />
+                </div>
+              </div>
+              <div className="grid grid-cols-2 gap-4">
+                <div className="space-y-1">
+                  <label className={labelClass}>Varieties (comma-separated)</label>
+                  <input value={varietiesText} onChange={e => setVarietiesText(e.target.value)} className={inputClass} placeholder="Bourbon, Arabica" />
+                </div>
+                <div className="space-y-1">
+                  <label className={labelClass}>Processing Methods (comma-separated)</label>
+                  <input value={processingsText} onChange={e => setProcessingsText(e.target.value)} className={inputClass} placeholder="Fully Washed, Natural" />
+                </div>
+              </div>
+              <div className="grid grid-cols-2 gap-4">
+                <div className="space-y-1">
+                  <label className={labelClass}>Certifications (comma-separated)</label>
+                  <input value={certsText} onChange={e => setCertsText(e.target.value)} className={inputClass} placeholder="Fairtrade, Organic" />
+                </div>
+                <div className="space-y-1">
+                  <label className={labelClass}>Sustainability Focus (comma-separated)</label>
+                  <input value={sustainabilityText} onChange={e => setSustainabilityText(e.target.value)} className={inputClass} placeholder="Agroforestry, Water management" />
+                </div>
+              </div>
+              <div className="flex items-center gap-3 pt-1">
+                <input type="checkbox" id="isBocParticipant" {...register('isBocParticipant')} className="w-4 h-4 accent-amber-600" />
+                <label htmlFor="isBocParticipant" className="text-sm font-bold text-stone-700">Best of Congo Participant</label>
               </div>
             </motion.div>
           )}
 
-          {step === 3 && (
+          {/* Step 4: Sensory Profile */}
+          {step === 4 && (
             <motion.div initial={{ opacity: 0 }} animate={{ opacity: 1 }} className="space-y-4">
               <h3 className="text-lg font-bold">{t('sensoryProfile')}</h3>
+              <p className="text-stone-400 text-xs">Score each attribute 0–10 (e.g. 8.5)</p>
               <div className="grid grid-cols-5 gap-4">
-                {['aroma', 'acidity', 'body', 'sweetness', 'aftertaste'].map((metric) => (
+                {(['aroma', 'acidity', 'body', 'sweetness', 'aftertaste'] as const).map((metric) => (
                   <div key={metric} className="space-y-1">
-                    <label className="text-[10px] font-bold text-stone-400 uppercase">{metric}</label>
-                    <input 
-                      type="number" 
-                      step="0.1" 
-                      {...register(`sensoryProfile.${metric}` as any, { valueAsNumber: true })} 
-                      className="w-full p-2 bg-stone-50 border border-stone-200 rounded-lg focus:ring-2 focus:ring-amber-500 outline-none text-center" 
+                    <label className="text-[10px] font-bold text-stone-400 uppercase">{t(metric)}</label>
+                    <input
+                      type="number"
+                      step="0.1"
+                      min="0"
+                      max="10"
+                      {...register(`sensoryProfile.${metric}` as any, { valueAsNumber: true })}
+                      className="w-full p-2 bg-stone-50 border border-stone-200 rounded-lg focus:ring-2 focus:ring-amber-500 outline-none text-center text-sm"
                     />
                   </div>
                 ))}
@@ -1078,7 +1221,7 @@ function CoopPortal({ coopId, isNew = false, onComplete }: { coopId?: string, is
           )}
 
           <div className="flex justify-between pt-8 border-t border-stone-100">
-            <button 
+            <button
               type="button"
               disabled={step === 1}
               onClick={() => setStep(s => s - 1)}
@@ -1086,8 +1229,8 @@ function CoopPortal({ coopId, isNew = false, onComplete }: { coopId?: string, is
             >
               {t('previous')}
             </button>
-            {step < 3 ? (
-              <button 
+            {step < TOTAL_STEPS ? (
+              <button
                 type="button"
                 onClick={() => setStep(s => s + 1)}
                 className="px-8 py-2 bg-stone-900 text-white rounded-xl font-bold hover:bg-stone-800 transition-all"
@@ -1095,7 +1238,7 @@ function CoopPortal({ coopId, isNew = false, onComplete }: { coopId?: string, is
                 {t('next')}
               </button>
             ) : (
-              <button 
+              <button
                 type="submit"
                 className="px-8 py-2 bg-amber-600 text-white rounded-xl font-bold hover:bg-amber-700 transition-all"
               >
