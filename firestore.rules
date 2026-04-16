@@ -72,5 +72,15 @@ service cloud.firestore {
       allow update: if isAdmin();
       allow delete: if isAdmin();
     }
+
+    match /bestofcongo_editions/{year} {
+      allow read: if true;
+      allow write: if isAdmin();
+    }
+
+    match /bestofcongo_editions/{year}/participants/{coopId} {
+      allow read: if true;
+      allow write: if isAdmin();
+    }
   }
 }

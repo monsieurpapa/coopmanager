@@ -1,3 +1,30 @@
+// --- Best of Congo ---
+
+export interface BocScore {
+  average: number; // admin-entered; no per-city breakdown in v1
+}
+
+export interface BocBuyer {
+  name: string;
+  logoUrl: string;
+}
+
+export interface EditionParticipant {
+  coopId: string;       // matches /cooperatives doc ID
+  qtySubmitted: number; // kg
+  scores: BocScore;
+  qtySold: number;      // kg
+  buyers: BocBuyer[];
+}
+
+export interface BestOfCongoEdition {
+  year: number;    // also the Firestore doc ID as a string (e.g. "2024")
+  theme?: string;
+  // participants stored as subcollection: /bestofcongo_editions/{year}/participants/{coopId}
+}
+
+// --- Cooperative ---
+
 export interface SensoryProfile {
   aroma: number;
   acidity: number;
