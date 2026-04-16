@@ -32,9 +32,7 @@
         "processingMethods": { "type": "array", "items": { "type": "string" } },
         "certifications": { "type": "array", "items": { "type": "string" } },
         "annualProduction": { "type": "number" },
-        "selfReportedCuppingScore": { "type": "number" },
-        "commodity": { "type": "string", "enum": ["coffee", "cocoa"], "default": "coffee" },
-        "isBocParticipant": { "type": "boolean" },
+        "averageCuppingScore": { "type": "number" },
         "description": { "type": "string" },
         "sustainabilityFocus": { "type": "array", "items": { "type": "string" } },
         "areaHa": { "type": "number" },
@@ -46,45 +44,6 @@
         "lastUpdated": { "type": "string", "format": "date-time" }
       },
       "required": ["name", "country", "region", "members"]
-    },
-    "BestOfCongoEdition": {
-      "title": "Best of Congo Edition",
-      "description": "One annual Best of Congo competition. Participants stored in subcollection.",
-      "type": "object",
-      "properties": {
-        "year": { "type": "integer", "description": "Competition year; also the Firestore doc ID." },
-        "theme": { "type": "string" }
-      },
-      "required": ["year"]
-    },
-    "EditionParticipant": {
-      "title": "Edition Participant",
-      "description": "Per-cooperative results for one Best of Congo edition.",
-      "type": "object",
-      "properties": {
-        "coopId": { "type": "string", "description": "Matches /cooperatives doc ID." },
-        "qtySubmitted": { "type": "number", "description": "Kg submitted to competition." },
-        "scores": {
-          "type": "object",
-          "properties": {
-            "average": { "type": "number", "description": "Admin-entered average score." }
-          },
-          "required": ["average"]
-        },
-        "qtySold": { "type": "number", "description": "Kg sold at auction." },
-        "buyers": {
-          "type": "array",
-          "items": {
-            "type": "object",
-            "properties": {
-              "name": { "type": "string" },
-              "logoUrl": { "type": "string" }
-            },
-            "required": ["name"]
-          }
-        }
-      },
-      "required": ["coopId", "qtySubmitted", "scores", "qtySold", "buyers"]
     },
     "StagingCooperative": {
       "title": "Staging Cooperative",
@@ -112,14 +71,6 @@
     "/staging_cooperatives/{stagingId}": {
       "schema": "StagingCooperative",
       "description": "Cooperatives awaiting admin review."
-    },
-    "/bestofcongo_editions/{year}": {
-      "schema": "BestOfCongoEdition",
-      "description": "Best of Congo competition edition. Participants in subcollection."
-    },
-    "/bestofcongo_editions/{year}/participants/{coopId}": {
-      "schema": "EditionParticipant",
-      "description": "Per-cooperative results for one edition. coopId matches /cooperatives doc ID."
     }
   }
 }

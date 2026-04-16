@@ -1,11 +1,8 @@
 import { GoogleGenAI, Type, ThinkingLevel } from "@google/genai";
 
+const ai = new GoogleGenAI({ apiKey: process.env.GEMINI_API_KEY });
+
 export const parseCooperativeProfile = async (base64Data: string, mimeType: string) => {
-  const apiKey = process.env.GEMINI_API_KEY;
-  if (!apiKey) {
-    throw new Error("GEMINI_API_KEY is not configured. Set it in .env.local to enable AI document parsing.");
-  }
-  const ai = new GoogleGenAI({ apiKey });
   const response = await ai.models.generateContent({
     model: "gemini-3-flash-preview",
     contents: [
@@ -64,10 +61,8 @@ export const parseCooperativeProfile = async (base64Data: string, mimeType: stri
     },
   });
 
-  const text = response.text;
-  if (!text) throw new Error("Empty response from AI");
   try {
-    return JSON.parse(text);
+    return JSON.parse(response.text);
   } catch (e) {
     console.error("Failed to parse Gemini response", e);
     throw new Error("Invalid response format from AI");

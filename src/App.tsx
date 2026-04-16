@@ -1,32 +1,79 @@
-import React, { useState, useMemo, useRef, useEffect } from 'react';
+import React, { useState, useMemo, useRef, useEffect, createContext, useContext } from 'react';
 import { 
   Radar, RadarChart, PolarGrid, PolarAngleAxis, ResponsiveContainer,
   BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, Legend,
   Cell, LineChart, Line
 } from 'recharts';
 import { 
-  Coffee, Users, MapPin, Calendar, Award,
+  Coffee, Users, MapPin, Calendar, Award, 
   TrendingUp, Leaf, Scale, ChevronRight, X,
   ArrowLeftRight, Info, DollarSign, Globe, Languages,
-  Plus, Upload, LogIn, LogOut, Shield, User as UserIcon, Loader2, Check, Search, Filter, Download, Edit, Trash2, Mail
+  Plus, Upload, LogIn, LogOut, Shield, User as UserIcon, Loader2, Check, Search, Filter, Download, Edit, Trash2
 } from 'lucide-react';
 import { motion, AnimatePresence } from 'motion/react';
-import { MOCK_COOPERATIVES, CoffeeCooperative, EditionParticipant, BestOfCongoEdition } from './types';
+import { MOCK_COOPERATIVES, CoffeeCooperative } from './types';
 import { cn } from './lib/utils';
 import { auth, db } from './firebase';
 import { onAuthStateChanged, signInWithPopup, GoogleAuthProvider, signOut, User as FirebaseUser } from 'firebase/auth';
-import { collection, onSnapshot, doc, setDoc, getDoc, updateDoc, addDoc, query, where, serverTimestamp, deleteDoc, getDocs, getDocFromServer, writeBatch, collectionGroup } from 'firebase/firestore';
+import { collection, onSnapshot, doc, setDoc, getDoc, updateDoc, addDoc, query, where, serverTimestamp, deleteDoc, getDocs, getDocFromServer } from 'firebase/firestore';
 import { useDropzone } from 'react-dropzone';
 import { parseCooperativeProfile } from './services/geminiService';
 import { useForm, useFieldArray } from 'react-hook-form';
 import { zodResolver } from '@hookform/resolvers/zod';
-import Markdown from 'react-markdown';
-import toast, { Toaster } from 'react-hot-toast';
 import * as z from 'zod';
-import { handleFirestoreError, OperationType } from './lib/firestore-utils';
-import { CooperativeSchema, type CooperativeFormData } from './schemas';
-import { LanguageContext, useTranslation, LanguageSwitcher, translations, type Language } from './contexts/language';
-import { LOGO_FALLBACK, IMAGE_FALLBACK, onLogoError, onImageError } from './lib/image-utils';
+import Markdown from 'react-markdown';
+
+// --- Error Handling ---
+enum OperationType {
+  CREATE = 'create',
+  UPDATE = 'update',
+  DELETE = 'delete',
+  LIST = 'list',
+  GET = 'get',
+  WRITE = 'write',
+}
+
+interface FirestoreErrorInfo {
+  error: string;
+  operationType: OperationType;
+  path: string | null;
+  authInfo: {
+    userId: string | undefined;
+    email: string | null | undefined;
+    emailVerified: boolean | undefined;
+    isAnonymous: boolean | undefined;
+    tenantId: string | null | undefined;
+    providerInfo: {
+      providerId: string;
+      displayName: string | null;
+      email: string | null;
+      photoUrl: string | null;
+    }[];
+  }
+}
+
+function handleFirestoreError(error: unknown, operationType: OperationType, path: string | null) {
+  const errInfo: FirestoreErrorInfo = {
+    error: error instanceof Error ? error.message : String(error),
+    authInfo: {
+      userId: auth.currentUser?.uid,
+      email: auth.currentUser?.email,
+      emailVerified: auth.currentUser?.emailVerified,
+      isAnonymous: auth.currentUser?.isAnonymous,
+      tenantId: auth.currentUser?.tenantId,
+      providerInfo: auth.currentUser?.providerData.map(provider => ({
+        providerId: provider.providerId,
+        displayName: provider.displayName,
+        email: provider.email,
+        photoUrl: provider.photoURL
+      })) || []
+    },
+    operationType,
+    path
+  };
+  console.error('Firestore Error: ', JSON.stringify(errInfo));
+  throw new Error(JSON.stringify(errInfo));
+}
 
 class ErrorBoundary extends React.Component<{ children: React.ReactNode }, { hasError: boolean, error: Error | null }> {
   constructor(props: { children: React.ReactNode }) {
@@ -75,34 +122,311 @@ class ErrorBoundary extends React.Component<{ children: React.ReactNode }, { has
   }
 }
 
-// --- Constants ---
+// --- Schemas ---
+const CooperativeSchema = z.object({
+  name: z.string().min(1, 'Name is required'),
+  country: z.string().min(1, 'Country is required'),
+  region: z.string().min(1, 'Region is required'),
+  established: z.number().optional(),
+  members: z.number().min(0),
+  menMembers: z.number().min(0).optional(),
+  womenMembers: z.number().min(0).optional(),
+  youthMembers: z.number().min(0).optional(),
+  altitudeRange: z.array(z.number()).length(2).optional(),
+  varieties: z.array(z.string()).optional(),
+  processingMethods: z.array(z.string()).optional(),
+  certifications: z.array(z.string()).optional(),
+  annualProduction: z.number().min(0).optional(),
+  averageCuppingScore: z.number().min(0).max(100).optional(),
+  description: z.string().optional(),
+  sustainabilityFocus: z.array(z.string()).optional(),
+  areaHa: z.number().min(0).optional(),
+  treeCount: z.number().min(0).optional(),
+  households: z.number().min(0).optional(),
+  imageUrl: z.string().url().optional().or(z.literal('')),
+  logoUrl: z.string().url().optional().or(z.literal('')),
+  sensoryProfile: z.object({
+    aroma: z.number().min(0).max(10),
+    acidity: z.number().min(0).max(10),
+    body: z.number().min(0).max(10),
+    sweetness: z.number().min(0).max(10),
+    aftertaste: z.number().min(0).max(10),
+  }).optional(),
+});
 
-const CANONICAL_CERTIFICATIONS = ['Fairtrade', 'Bio-NOP', 'Bio-UE', 'Bio-BRA', 'RainForest Alliance', 'UTZ'];
-const ADMIN_EMAIL = 'dieudonneishara@gmail.com';
+type CooperativeFormData = z.infer<typeof CooperativeSchema>;
 
-// --- CSV helpers ---
+// --- Localization ---
+type Language = 'en' | 'fr';
 
-function escapeCsvCell(value: unknown): string {
-  const str = String(value ?? '');
-  if (str.includes('"') || str.includes(',') || str.includes('\n')) {
-    return `"${str.replace(/"/g, '""')}"`;
+const translations = {
+  en: {
+    directory: 'Directory',
+    comparison: 'Comparison Engine',
+    analytics: 'Analytics',
+    searchPlaceholder: 'Search cooperatives...',
+    allRegions: 'All Regions',
+    members: 'Members',
+    score: 'Score',
+    viewDetails: 'View Details',
+    compare: 'Compare',
+    backToDirectory: 'Back to Directory',
+    interactiveComparison: 'Interactive Comparison',
+    analyzingMetrics: 'Analyzing metrics across coffee cooperatives.',
+    selectCooperatives: 'Select Cooperatives',
+    selectTop4: 'Select Top 4',
+    clearAll: 'Clear All',
+    selectMetrics: 'Select Metrics to Compare',
+    exportCSV: 'Export CSV',
+    detailedMatrix: 'Detailed Comparison Matrix',
+    downloadReport: 'Download Report',
+    established: 'Established',
+    production: 'Annual Production',
+    metric: 'Metric',
+    addToComparison: 'Add to Comparison',
+    removeFromComparison: 'Remove from Comparison',
+    searchMetrics: 'Search metrics...',
+    cuppingScore: 'Cupping Score',
+    womenMembers: 'Women Members',
+    youthMembers: 'Youth Members',
+    totalArea: 'Total Area',
+    treeCount: 'Tree Count',
+    households: 'Households',
+    overview: 'Overview',
+    productionStats: 'Production Stats',
+    memberDemographics: 'Member Demographics',
+    sensoryProfile: 'Sensory Profile',
+    location: 'Location',
+    description: 'Description',
+    aroma: 'Aroma',
+    acidity: 'Acidity',
+    body: 'Body',
+    sweetness: 'Sweetness',
+    aftertaste: 'Aftertaste',
+    genderDistribution: 'Gender Distribution',
+    men: 'Men',
+    women: 'Women',
+    youthRepresentation: 'Youth Representation',
+    socialImpact: 'Social Impact',
+    beneficiaryHouseholds: 'Beneficiary Households',
+    productionCapacity: 'Production Capacity',
+    coffeeTrees: 'Coffee Trees',
+    productionRevenueTrends: 'Production & Revenue Trends',
+    varieties: 'Varieties',
+    sustainabilityFocus: 'Sustainability Focus',
+    selectACooperative: 'Select a Cooperative',
+    selectACooperativeDesc: 'Choose a cooperative from the list to view its detailed profile, metrics, and sensory data.',
+    platform: 'Platform',
+    marketplace: 'Marketplace',
+    impactReports: 'Impact Reports',
+    contact: 'Contact',
+    support: 'Support',
+    partnerships: 'Partnerships',
+    privacyPolicy: 'Privacy Policy',
+    allRightsReserved: 'All rights reserved.',
+    systemStatus: 'System Status',
+    operational: 'Operational',
+    coopsSelected: 'Coops Selected',
+    compareNow: 'Compare Now',
+    platformDesc: 'Empowering coffee cooperatives through data-driven insights and market connectivity. Bridging the gap between specialty producers and global roasters.',
+    stagingArea: 'AI Staging Area',
+    coopPortal: 'Coop Portal',
+    cooperatives: 'Cooperatives',
+    login: 'Login',
+    logout: 'Logout',
+    uploadPDF: 'Upload PDF/Image',
+    parsingData: 'AI is parsing the document...',
+    reviewData: 'Review Parsed Data',
+    saveToDirectory: 'Save to Directory',
+    coopManagerPortal: 'Cooperative Manager Portal',
+    updateProfile: 'Update Profile',
+    productionWizard: 'Production Update Wizard',
+    step: 'Step',
+    next: 'Next',
+    previous: 'Previous',
+    submit: 'Submit',
+    success: 'Success',
+    error: 'Error',
+    loading: 'Loading...',
+    admin: 'Admin',
+    welcome: 'Welcome',
+    manageCoop: 'Manage your cooperative profile and production data.',
+    dropFiles: 'Drop files here or click to upload',
+    supportedFormats: 'Supported formats: PDF, PNG, JPG',
+    processing: 'Processing...',
+    confirmAndSave: 'Confirm and Save',
+    discard: 'Discard',
+    noStagingData: 'No staging data available. Upload a document to get started.',
+    unauthorized: 'You are not authorized to view this page.',
+    pleaseLogin: 'Please login to access the portal.',
+    managerEmail: 'Manager Email (Invitation)',
+    inviteManager: 'Invite a manager to this cooperative',
+    managerInvited: 'Manager successfully invited!',
+    userProfile: 'User Profile',
+    phoneNumber: 'Phone Number',
+    bio: 'Bio',
+    saveChanges: 'Save Changes',
+    cancel: 'Cancel',
+    displayName: 'Display Name',
+    deleteCooperative: 'Delete Cooperative',
+    confirmDelete: 'Are you sure you want to delete this cooperative? This action cannot be undone.',
+    editCooperative: 'Edit Cooperative',
+    addCooperative: 'Add Cooperative',
+    newCooperative: 'New Cooperative'
+  },
+  fr: {
+    directory: 'Répertoire',
+    comparison: 'Moteur de Comparaison',
+    analytics: 'Analyses',
+    searchPlaceholder: 'Rechercher des coopératives...',
+    allRegions: 'Toutes les Régions',
+    members: 'Membres',
+    score: 'Score',
+    viewDetails: 'Voir Détails',
+    compare: 'Comparer',
+    backToDirectory: 'Retour au Répertoire',
+    interactiveComparison: 'Comparaison Interactive',
+    analyzingMetrics: 'Analyse des indicateurs des coopératives de café.',
+    selectCooperatives: 'Sélectionner des Coopératives',
+    selectTop4: 'Top 4',
+    clearAll: 'Tout Effacer',
+    selectMetrics: 'Indicateurs à Comparer',
+    exportCSV: 'Exporter CSV',
+    detailedMatrix: 'Matrice de Comparaison Détaillée',
+    downloadReport: 'Télécharger le Rapport',
+    established: 'Établi en',
+    production: 'Production Annuelle',
+    metric: 'Indicateur',
+    addToComparison: 'Ajouter à la Comparaison',
+    removeFromComparison: 'Retirer de la Comparaison',
+    searchMetrics: 'Rechercher des indicateurs...',
+    cuppingScore: 'Score de Dégustation',
+    womenMembers: 'Femmes Membres',
+    youthMembers: 'Jeunes Membres',
+    totalArea: 'Superficie Totale',
+    treeCount: 'Nombre d\'Arbres',
+    households: 'Ménages',
+    overview: 'Aperçu',
+    productionStats: 'Stats de Production',
+    memberDemographics: 'Démographie des Membres',
+    sensoryProfile: 'Profil Sensoriel',
+    location: 'Emplacement',
+    description: 'Description',
+    aroma: 'Arôme',
+    acidity: 'Acidité',
+    body: 'Corps',
+    sweetness: 'Douceur',
+    aftertaste: 'Arrière-goût',
+    genderDistribution: 'Répartition par Sexe',
+    men: 'Hommes',
+    women: 'Femmes',
+    youthRepresentation: 'Représentation des Jeunes',
+    socialImpact: 'Impact Social',
+    beneficiaryHouseholds: 'Ménages Bénéficiaires',
+    productionCapacity: 'Capacité de Production',
+    coffeeTrees: 'Caféiers',
+    productionRevenueTrends: 'Tendances de Production et Revenus',
+    varieties: 'Variétés',
+    sustainabilityFocus: 'Focus Durabilité',
+    selectACooperative: 'Sélectionnez une Coopérative',
+    selectACooperativeDesc: 'Choisissez une coopérative dans la liste pour voir son profil détaillé, ses indicateurs et ses données sensorielles.',
+    platform: 'Plateforme',
+    marketplace: 'Marché',
+    impactReports: 'Rapports d\'Impact',
+    contact: 'Contact',
+    support: 'Support',
+    partnerships: 'Partenariats',
+    privacyPolicy: 'Politique de Confidentialité',
+    allRightsReserved: 'Tous droits réservés.',
+    systemStatus: 'Statut du Système',
+    operational: 'Opérationnel',
+    coopsSelected: 'Coops Sélectionnées',
+    compareNow: 'Comparer Maintenant',
+    platformDesc: 'Autonomiser les coopératives de café grâce à des données et à la connectivité du marché. Combler le fossé entre les producteurs de spécialité et les torréfacteurs mondiaux.',
+    stagingArea: 'Zone de Transit IA',
+    coopPortal: 'Portail Coop',
+    cooperatives: 'Coopératives',
+    login: 'Connexion',
+    logout: 'Déconnexion',
+    uploadPDF: 'Télécharger PDF/Image',
+    parsingData: 'L\'IA analyse le document...',
+    reviewData: 'Réviser les Données Analysées',
+    saveToDirectory: 'Enregistrer dans le Répertoire',
+    coopManagerPortal: 'Portail Gestionnaire de Coopérative',
+    updateProfile: 'Mettre à Jour le Profil',
+    productionWizard: 'Assistant de Mise à Jour de Production',
+    step: 'Étape',
+    next: 'Suivant',
+    previous: 'Précédent',
+    submit: 'Soumettre',
+    success: 'Succès',
+    error: 'Erreur',
+    loading: 'Chargement...',
+    admin: 'Admin',
+    welcome: 'Bienvenue',
+    manageCoop: 'Gérez votre profil de coopérative et vos données de production.',
+    dropFiles: 'Déposez les fichiers ici ou cliquez pour télécharger',
+    supportedFormats: 'Formats supportés : PDF, PNG, JPG',
+    processing: 'Traitement...',
+    confirmAndSave: 'Confirmer et Enregistrer',
+    discard: 'Abandonner',
+    noStagingData: 'Aucune donnée en transit. Téléchargez un document pour commencer.',
+    unauthorized: 'Vous n\'êtes pas autorisé à consulter cette page.',
+    pleaseLogin: 'Veuillez vous connecter pour accéder au portail.',
+    managerEmail: 'Email du Gestionnaire (Invitation)',
+    inviteManager: 'Inviter un gestionnaire pour cette coopérative',
+    managerInvited: 'Gestionnaire invité avec succès !',
+    userProfile: 'Profil Utilisateur',
+    phoneNumber: 'Numéro de Téléphone',
+    bio: 'Bio',
+    saveChanges: 'Enregistrer les Modifications',
+    cancel: 'Annuler',
+    displayName: 'Nom d\'affichage',
+    deleteCooperative: 'Supprimer la Coopérative',
+    confirmDelete: 'Êtes-vous sûr de vouloir supprimer cette coopérative ? Cette action est irréversible.',
+    editCooperative: 'Modifier la Coopérative',
+    addCooperative: 'Ajouter une Coopérative',
+    newCooperative: 'Nouvelle Coopérative'
   }
-  return str;
-}
+};
 
-function downloadCsv(rows: unknown[][], filename: string) {
-  const content = rows.map(row => row.map(escapeCsvCell).join(',')).join('\n');
-  const blob = new Blob([content], { type: 'text/csv;charset=utf-8;' });
-  const url = URL.createObjectURL(blob);
-  const link = document.createElement('a');
-  link.setAttribute('href', url);
-  link.setAttribute('download', filename);
-  link.style.visibility = 'hidden';
-  document.body.appendChild(link);
-  link.click();
-  document.body.removeChild(link);
-  URL.revokeObjectURL(url);
-}
+const LanguageContext = createContext<{
+  lang: Language;
+  setLang: (l: Language) => void;
+  t: (key: keyof typeof translations.en) => string;
+}>({
+  lang: 'en',
+  setLang: () => {},
+  t: (key) => translations.en[key]
+});
+
+const useTranslation = () => useContext(LanguageContext);
+
+const LanguageSwitcher = () => {
+  const { lang, setLang } = useTranslation();
+  return (
+    <div className="flex items-center gap-2 bg-stone-100 p-1 rounded-lg border border-stone-200">
+      <button 
+        onClick={() => setLang('en')}
+        className={cn(
+          "px-3 py-1 text-[10px] font-black uppercase tracking-widest rounded-md transition-all",
+          lang === 'en' ? "bg-white text-amber-900 shadow-sm" : "text-stone-400 hover:text-stone-600"
+        )}
+      >
+        EN
+      </button>
+      <button 
+        onClick={() => setLang('fr')}
+        className={cn(
+          "px-3 py-1 text-[10px] font-black uppercase tracking-widest rounded-md transition-all",
+          lang === 'fr' ? "bg-white text-amber-900 shadow-sm" : "text-stone-400 hover:text-stone-600"
+        )}
+      >
+        FR
+      </button>
+    </div>
+  );
+};
 
 // --- Components ---
 
@@ -127,7 +451,7 @@ const HoverSummary = ({ coop, onCompare, isComparing }: { coop: CoffeeCooperativ
       className="absolute z-50 left-full ml-4 top-0 w-64 bg-white p-4 rounded-2xl shadow-2xl border border-stone-200"
     >
       <div className="flex items-center gap-3 mb-3">
-        <img src={coop.logoUrl} alt="" className="w-10 h-10 rounded-lg object-cover border border-stone-100" referrerPolicy="no-referrer" onError={onLogoError} />
+        <img src={coop.logoUrl} alt="" className="w-10 h-10 rounded-lg object-cover border border-stone-100" referrerPolicy="no-referrer" />
         <div>
           <h4 className="font-bold text-stone-900 text-sm leading-tight">{coop.name}</h4>
           <p className="text-[10px] text-stone-500">{coop.region}</p>
@@ -140,7 +464,7 @@ const HoverSummary = ({ coop, onCompare, isComparing }: { coop: CoffeeCooperativ
         </div>
         <div className="bg-stone-50 p-2 rounded-lg">
           <p className="text-[8px] text-stone-400 uppercase font-black">{t('score')}</p>
-          <p className="text-xs font-bold text-amber-600">{coop.selfReportedCuppingScore}</p>
+          <p className="text-xs font-bold text-amber-600">{coop.averageCuppingScore}</p>
         </div>
       </div>
       <p className="text-[10px] text-stone-600 line-clamp-2 italic mb-3">"{coop.description}"</p>
@@ -188,9 +512,9 @@ const SensoryRadar = ({ profile, name }: { profile: any, name: string }) => {
   );
 };
 
-const ComparisonView = ({ selectedIds, onRemove, onAdd, cooperatives }: { selectedIds: string[], onRemove: (id: string) => void, onAdd: (id: string) => void, cooperatives: CoffeeCooperative[] }) => {
+const ComparisonView = ({ selectedIds, onRemove, onAdd }: { selectedIds: string[], onRemove: (id: string) => void, onAdd: (id: string) => void }) => {
   const { t } = useTranslation();
-  const [selectedMetrics, setSelectedMetrics] = useState<string[]>(['selfReportedCuppingScore', 'annualProduction']);
+  const [selectedMetrics, setSelectedMetrics] = useState<string[]>(['averageCuppingScore', 'annualProduction']);
   const [isCoopDropdownOpen, setIsCoopDropdownOpen] = useState(false);
   const [isMetricDropdownOpen, setIsMetricDropdownOpen] = useState(false);
   const [coopSearch, setCoopSearch] = useState('');
@@ -211,13 +535,13 @@ const ComparisonView = ({ selectedIds, onRemove, onAdd, cooperatives }: { select
     return () => document.removeEventListener('mousedown', handleClickOutside);
   }, []);
 
-  const selectedCoops = useMemo(() =>
-    cooperatives.filter(c => selectedIds.includes(c.id)),
-    [selectedIds, cooperatives]
+  const selectedCoops = useMemo(() => 
+    MOCK_COOPERATIVES.filter(c => selectedIds.includes(c.id)),
+    [selectedIds]
   );
 
   const availableMetrics = [
-    { id: 'selfReportedCuppingScore', label: t('cuppingScore'), unit: 'pts', color: '#d97706' },
+    { id: 'averageCuppingScore', label: t('cuppingScore'), unit: 'pts', color: '#d97706' },
     { id: 'annualProduction', label: t('production'), unit: 'Tons', color: '#059669' },
     { id: 'members', label: t('members'), unit: '', color: '#2563eb' },
     { id: 'womenMembers', label: t('womenMembers'), unit: '', color: '#db2777' },
@@ -241,7 +565,7 @@ const ComparisonView = ({ selectedIds, onRemove, onAdd, cooperatives }: { select
     );
   };
 
-  const filteredCoops = cooperatives.filter(c =>
+  const filteredCoops = MOCK_COOPERATIVES.filter(c => 
     c.name.toLowerCase().includes(coopSearch.toLowerCase())
   );
 
@@ -259,7 +583,20 @@ const ComparisonView = ({ selectedIds, onRemove, onAdd, cooperatives }: { select
       ['Country', ...selectedCoops.map(c => c.country)]
     ];
 
-    downloadCsv([headers, ...rows], `cooperative_comparison_${new Date().toISOString().split('T')[0]}.csv`);
+    const csvContent = [
+      headers.join(','),
+      ...rows.map(row => row.map(cell => `"${cell}"`).join(','))
+    ].join('\n');
+
+    const blob = new Blob([csvContent], { type: 'text/csv;charset=utf-8;' });
+    const link = document.createElement('a');
+    const url = URL.createObjectURL(blob);
+    link.setAttribute('href', url);
+    link.setAttribute('download', `cooperative_comparison_${new Date().toISOString().split('T')[0]}.csv`);
+    link.style.visibility = 'hidden';
+    document.body.appendChild(link);
+    link.click();
+    document.body.removeChild(link);
   };
 
   return (
@@ -272,7 +609,7 @@ const ComparisonView = ({ selectedIds, onRemove, onAdd, cooperatives }: { select
             <label className="text-[10px] font-black text-stone-400 uppercase tracking-widest">{t('selectCooperatives')}</label>
             <div className="flex gap-4">
               <button 
-                onClick={() => cooperatives.slice(0, 4).forEach(c => onAdd(c.id))}
+                onClick={() => MOCK_COOPERATIVES.slice(0, 4).forEach(c => onAdd(c.id))}
                 className="text-[10px] font-bold text-amber-600 hover:text-amber-700 uppercase tracking-widest"
               >
                 {t('selectTop4')}
@@ -295,7 +632,7 @@ const ComparisonView = ({ selectedIds, onRemove, onAdd, cooperatives }: { select
               selectedCoops.map(c => (
                 <div key={c.id} className="relative group/tag">
                   <span className="inline-flex items-center gap-1.5 px-2.5 py-1 bg-stone-100 text-stone-900 text-xs font-bold rounded-lg border border-stone-200 hover:bg-stone-200 transition-colors">
-                    <img src={c.logoUrl} alt="" className="w-4 h-4 rounded-sm object-cover" onError={onLogoError} />
+                    <img src={c.logoUrl} alt="" className="w-4 h-4 rounded-sm object-cover" />
                     {c.name}
                     <button 
                       onClick={(e) => { e.stopPropagation(); onRemove(c.id); }}
@@ -356,7 +693,7 @@ const ComparisonView = ({ selectedIds, onRemove, onAdd, cooperatives }: { select
                       )}>
                         {selectedIds.includes(coop.id) && <X size={10} className="text-white" />}
                       </div>
-                      <img src={coop.logoUrl} alt="" className="w-6 h-6 rounded object-cover" onError={onLogoError} />
+                      <img src={coop.logoUrl} alt="" className="w-6 h-6 rounded object-cover" />
                       <span className="text-sm font-bold text-stone-900">{coop.name}</span>
                     </div>
                   ))}
@@ -470,7 +807,7 @@ const ComparisonView = ({ selectedIds, onRemove, onAdd, cooperatives }: { select
             return (
               <div key={mId} className="bg-white p-4 rounded-2xl border border-stone-200 shadow-sm flex items-center gap-4">
                 <div className="w-10 h-10 rounded-xl overflow-hidden border border-stone-100 shrink-0">
-                  <img src={topCoop.logoUrl} alt="" className="w-full h-full object-cover" onError={onLogoError} />
+                  <img src={topCoop.logoUrl} alt="" className="w-full h-full object-cover" />
                 </div>
                 <div>
                   <p className="text-[8px] font-black text-stone-400 uppercase tracking-widest leading-none mb-1">Top {metric.label}</p>
@@ -508,12 +845,6 @@ const ComparisonView = ({ selectedIds, onRemove, onAdd, cooperatives }: { select
               </div>
               
               <div className="h-[250px]">
-                {selectedCoops.length === 0 ? (
-                  <div className="h-full flex flex-col items-center justify-center text-stone-300 gap-2">
-                    <Scale size={28} />
-                    <p className="text-xs font-bold text-stone-400">Select cooperatives above to compare</p>
-                  </div>
-                ) : (
                 <ResponsiveContainer width="100%" height="100%">
                   <BarChart data={chartData} margin={{ top: 10, right: 30, left: 0, bottom: 0 }}>
                     <CartesianGrid strokeDasharray="3 3" vertical={false} stroke="#f3f4f6" />
@@ -540,7 +871,6 @@ const ComparisonView = ({ selectedIds, onRemove, onAdd, cooperatives }: { select
                     </Bar>
                   </BarChart>
                 </ResponsiveContainer>
-                )}
               </div>
             </motion.div>
           );
@@ -574,7 +904,7 @@ const ComparisonView = ({ selectedIds, onRemove, onAdd, cooperatives }: { select
                   {selectedCoops.map(c => (
                     <th key={c.id} className="px-8 py-4 border-b border-stone-100">
                       <div className="flex items-center gap-2">
-                        <img src={c.logoUrl} alt="" className="w-6 h-6 rounded object-cover border border-stone-200" onError={onLogoError} />
+                        <img src={c.logoUrl} alt="" className="w-6 h-6 rounded object-cover border border-stone-200" />
                         <span className="text-sm font-black text-stone-900">{c.name}</span>
                       </div>
                     </th>
@@ -825,7 +1155,7 @@ function StagingArea() {
               </div>
               <div>
                 <p className="text-[10px] font-bold text-stone-400 uppercase tracking-widest mb-1">Cupping Score</p>
-                <p className="font-bold text-amber-600">{parsedData.selfReportedCuppingScore}</p>
+                <p className="font-bold text-amber-600">{parsedData.averageCuppingScore}</p>
               </div>
             </div>
             <div>
@@ -900,8 +1230,6 @@ function StagingArea() {
 }
 
 // --- Cooperative Portal Component ---
-const TOTAL_STEPS = 4;
-
 function CoopPortal({ coopId, isNew = false, onComplete }: { coopId?: string, isNew?: boolean, onComplete?: () => void }) {
   const { t } = useTranslation();
   const [coop, setCoop] = useState<any>(isNew ? {
@@ -916,13 +1244,6 @@ function CoopPortal({ coopId, isNew = false, onComplete }: { coopId?: string, is
     established: new Date().getFullYear()
   } : null);
   const [step, setStep] = useState(1);
-
-  // Comma-separated text state for array fields (Zod schema expects arrays)
-  const [varietiesText, setVarietiesText] = useState('');
-  const [processingsText, setProcessingsText] = useState('');
-  const [certsText, setCertsText] = useState('');
-  const [sustainabilityText, setSustainabilityText] = useState('');
-
   const { register, handleSubmit, reset, formState: { errors } } = useForm<CooperativeFormData>({
     resolver: zodResolver(CooperativeSchema),
     defaultValues: isNew ? {
@@ -933,8 +1254,6 @@ function CoopPortal({ coopId, isNew = false, onComplete }: { coopId?: string, is
       annualProduction: 0,
       sensoryProfile: { aroma: 0, acidity: 0, body: 0, sweetness: 0, aftertaste: 0 },
       varieties: [],
-      processingMethods: [],
-      certifications: [],
       sustainabilityFocus: [],
       established: new Date().getFullYear()
     } : undefined
@@ -947,16 +1266,12 @@ function CoopPortal({ coopId, isNew = false, onComplete }: { coopId?: string, is
       return;
     }
     const path = `cooperatives/${coopId}`;
-    return onSnapshot(doc(db, 'cooperatives', coopId), (snap) => {
-      if (snap.exists()) {
-        const data = snap.data();
-        setCoop(data);
-        reset(data as any);
-        setVarietiesText((data.varieties ?? []).join(', '));
-        setProcessingsText((data.processingMethods ?? []).join(', '));
-        setCertsText((data.certifications ?? []).join(', '));
-        setSustainabilityText((data.sustainabilityFocus ?? []).join(', '));
+    return onSnapshot(doc(db, 'cooperatives', coopId), (doc) => {
+      if (doc.exists()) {
+        setCoop(doc.data());
+        reset(doc.data() as any);
       } else {
+        // If document doesn't exist, we should probably handle it
         console.warn(`Cooperative ${coopId} not found`);
         setCoop({ name: 'Not Found', country: '', region: '', members: 0 });
       }
@@ -965,33 +1280,26 @@ function CoopPortal({ coopId, isNew = false, onComplete }: { coopId?: string, is
     });
   }, [coopId, reset, isNew]);
 
-  const parseCSV = (text: string) => text.split(',').map(s => s.trim()).filter(Boolean);
-
   const onSubmit = async (data: CooperativeFormData) => {
     try {
-      const payload = {
-        ...data,
-        varieties: parseCSV(varietiesText),
-        processingMethods: parseCSV(processingsText),
-        certifications: parseCSV(certsText),
-        sustainabilityFocus: parseCSV(sustainabilityText),
-        lastUpdated: serverTimestamp(),
-      };
       if (isNew) {
-        await addDoc(collection(db, 'cooperatives'), payload);
+        await addDoc(collection(db, 'cooperatives'), {
+          ...data,
+          lastUpdated: serverTimestamp()
+        });
       } else if (coopId) {
-        await updateDoc(doc(db, 'cooperatives', coopId), payload);
+        await updateDoc(doc(db, 'cooperatives', coopId), {
+          ...data,
+          lastUpdated: serverTimestamp()
+        });
       }
-      toast.success(t('success'));
+      alert(t('success'));
       if (onComplete) onComplete();
     } catch (error) {
       console.error("Error saving coop", error);
-      toast.error(t('error'));
+      alert(t('error'));
     }
   };
-
-  const inputClass = "w-full p-3 bg-stone-50 border border-stone-200 rounded-xl focus:ring-2 focus:ring-amber-500 outline-none text-sm";
-  const labelClass = "text-xs font-bold text-stone-400 uppercase tracking-wide";
 
   if (!coop) return <div className="p-12 text-center"><Loader2 className="animate-spin mx-auto" /></div>;
 
@@ -1009,8 +1317,8 @@ function CoopPortal({ coopId, isNew = false, onComplete }: { coopId?: string, is
 
       <div className="bg-white p-8 rounded-3xl border border-stone-200 shadow-sm">
         <div className="flex items-center justify-between mb-8">
-          <div className="flex items-center gap-3">
-            {Array.from({ length: TOTAL_STEPS }, (_, i) => i + 1).map((s) => (
+          <div className="flex items-center gap-4">
+            {[1, 2, 3].map((s) => (
               <div key={s} className="flex items-center gap-2">
                 <div className={cn(
                   "w-8 h-8 rounded-full flex items-center justify-center text-xs font-bold transition-all",
@@ -1018,201 +1326,79 @@ function CoopPortal({ coopId, isNew = false, onComplete }: { coopId?: string, is
                 )}>
                   {step > s ? <Check size={14} /> : s}
                 </div>
-                {s < TOTAL_STEPS && <div className="w-6 h-px bg-stone-100" />}
+                {s < 3 && <div className="w-8 h-px bg-stone-100" />}
               </div>
             ))}
           </div>
-          {!isNew && (
-            <button
-              type="button"
-              onClick={async () => {
-                if (!coopId) return;
-                if (window.confirm(t('confirmDelete'))) {
-                  try {
-                    await deleteDoc(doc(db, 'cooperatives', coopId));
-                    toast.success(t('success'));
-                    window.location.reload();
-                  } catch (error) {
-                    console.error("Error deleting coop", error);
-                    toast.error(t('error'));
-                  }
+          <button 
+            type="button"
+            onClick={async () => {
+              if (window.confirm(t('confirmDelete'))) {
+                try {
+                  await deleteDoc(doc(db, 'cooperatives', coopId));
+                  alert(t('success'));
+                  window.location.reload();
+                } catch (error) {
+                  console.error("Error deleting coop", error);
+                  alert(t('error'));
                 }
-              }}
-              className="flex items-center gap-2 px-4 py-2 text-red-500 hover:bg-red-50 rounded-xl text-xs font-bold transition-all"
-            >
-              <Trash2 size={14} /> {t('deleteCooperative')}
-            </button>
-          )}
+              }
+            }}
+            className="flex items-center gap-2 px-4 py-2 text-red-500 hover:bg-red-50 rounded-xl text-xs font-bold transition-all"
+          >
+            <Trash2 size={14} /> {t('deleteCooperative')}
+          </button>
         </div>
 
         <form onSubmit={handleSubmit(onSubmit)} className="space-y-6">
-          {/* Step 1: Identity */}
           {step === 1 && (
             <motion.div initial={{ opacity: 0 }} animate={{ opacity: 1 }} className="space-y-4">
               <h3 className="text-lg font-bold">{t('overview')}</h3>
               <div className="grid grid-cols-2 gap-4">
                 <div className="space-y-1">
-                  <label className={labelClass}>Cooperative Name *</label>
-                  <input {...register('name')} className={inputClass} />
-                  {errors.name && <p className="text-red-500 text-xs">{errors.name.message}</p>}
+                  <label className="text-xs font-bold text-stone-400 uppercase">Cooperative Name</label>
+                  <input {...register('name')} className="w-full p-3 bg-stone-50 border border-stone-200 rounded-xl focus:ring-2 focus:ring-amber-500 outline-none" />
                 </div>
                 <div className="space-y-1">
-                  <label className={labelClass}>Country *</label>
-                  <input {...register('country')} className={inputClass} />
-                  {errors.country && <p className="text-red-500 text-xs">{errors.country.message}</p>}
-                </div>
-              </div>
-              <div className="grid grid-cols-2 gap-4">
-                <div className="space-y-1">
-                  <label className={labelClass}>Region *</label>
-                  <input {...register('region')} className={inputClass} placeholder="e.g. Sud-Kivu" />
-                  {errors.region && <p className="text-red-500 text-xs">{errors.region.message}</p>}
-                </div>
-                <div className="space-y-1">
-                  <label className={labelClass}>Year Established</label>
-                  <input type="number" {...register('established', { valueAsNumber: true })} className={inputClass} placeholder="e.g. 2019" />
-                </div>
-              </div>
-              <div className="grid grid-cols-2 gap-4">
-                <div className="space-y-1">
-                  <label className={labelClass}>Commodity</label>
-                  <select {...register('commodity')} className={inputClass}>
-                    <option value="">-- select --</option>
-                    <option value="coffee">Coffee</option>
-                    <option value="cocoa">Cocoa</option>
-                  </select>
-                </div>
-                <div className="space-y-1">
-                  <label className={labelClass}>Manager Email</label>
-                  <input type="email" {...register('managerEmail')} className={inputClass} placeholder="manager@example.com" />
-                </div>
-              </div>
-              <div className="grid grid-cols-2 gap-4">
-                <div className="space-y-1">
-                  <label className={labelClass}>Image URL</label>
-                  <input {...register('imageUrl')} className={inputClass} placeholder="https://..." />
-                </div>
-                <div className="space-y-1">
-                  <label className={labelClass}>Logo URL</label>
-                  <input {...register('logoUrl')} className={inputClass} placeholder="https://..." />
+                  <label className="text-xs font-bold text-stone-400 uppercase">Country</label>
+                  <input {...register('country')} className="w-full p-3 bg-stone-50 border border-stone-200 rounded-xl focus:ring-2 focus:ring-amber-500 outline-none" />
                 </div>
               </div>
               <div className="space-y-1">
-                <label className={labelClass}>Description</label>
-                <textarea {...register('description')} rows={4} className={inputClass} />
+                <label className="text-xs font-bold text-stone-400 uppercase">Description</label>
+                <textarea {...register('description')} rows={4} className="w-full p-3 bg-stone-50 border border-stone-200 rounded-xl focus:ring-2 focus:ring-amber-500 outline-none" />
               </div>
             </motion.div>
           )}
 
-          {/* Step 2: Members & Impact */}
           {step === 2 && (
-            <motion.div initial={{ opacity: 0 }} animate={{ opacity: 1 }} className="space-y-4">
-              <h3 className="text-lg font-bold">{t('memberDemographics')}</h3>
-              <div className="grid grid-cols-2 gap-4">
-                <div className="space-y-1">
-                  <label className={labelClass}>Total Members *</label>
-                  <input type="number" {...register('members', { valueAsNumber: true })} className={inputClass} />
-                  {errors.members && <p className="text-red-500 text-xs">{errors.members.message}</p>}
-                </div>
-                <div className="space-y-1">
-                  <label className={labelClass}>Households</label>
-                  <input type="number" {...register('households', { valueAsNumber: true })} className={inputClass} />
-                </div>
-              </div>
-              <div className="grid grid-cols-3 gap-4">
-                <div className="space-y-1">
-                  <label className={labelClass}>Men Members</label>
-                  <input type="number" {...register('menMembers', { valueAsNumber: true })} className={inputClass} />
-                </div>
-                <div className="space-y-1">
-                  <label className={labelClass}>Women Members</label>
-                  <input type="number" {...register('womenMembers', { valueAsNumber: true })} className={inputClass} />
-                </div>
-                <div className="space-y-1">
-                  <label className={labelClass}>Youth Members</label>
-                  <input type="number" {...register('youthMembers', { valueAsNumber: true })} className={inputClass} />
-                </div>
-              </div>
-              <div className="grid grid-cols-2 gap-4">
-                <div className="space-y-1">
-                  <label className={labelClass}>Area (ha)</label>
-                  <input type="number" step="0.1" {...register('areaHa', { valueAsNumber: true })} className={inputClass} />
-                </div>
-                <div className="space-y-1">
-                  <label className={labelClass}>Tree Count</label>
-                  <input type="number" {...register('treeCount', { valueAsNumber: true })} className={inputClass} />
-                </div>
-              </div>
-            </motion.div>
-          )}
-
-          {/* Step 3: Production & Quality */}
-          {step === 3 && (
             <motion.div initial={{ opacity: 0 }} animate={{ opacity: 1 }} className="space-y-4">
               <h3 className="text-lg font-bold">{t('productionStats')}</h3>
               <div className="grid grid-cols-2 gap-4">
                 <div className="space-y-1">
-                  <label className={labelClass}>Annual Production (Tons)</label>
-                  <input type="number" step="0.1" {...register('annualProduction', { valueAsNumber: true })} className={inputClass} />
+                  <label className="text-xs font-bold text-stone-400 uppercase">Total Members</label>
+                  <input type="number" {...register('members', { valueAsNumber: true })} className="w-full p-3 bg-stone-50 border border-stone-200 rounded-xl focus:ring-2 focus:ring-amber-500 outline-none" />
                 </div>
                 <div className="space-y-1">
-                  <label className={labelClass}>Self-Reported Cupping Score</label>
-                  <input type="number" step="0.1" min="0" max="100" {...register('selfReportedCuppingScore', { valueAsNumber: true })} className={inputClass} />
+                  <label className="text-xs font-bold text-stone-400 uppercase">Annual Production (Tons)</label>
+                  <input type="number" step="0.1" {...register('annualProduction', { valueAsNumber: true })} className="w-full p-3 bg-stone-50 border border-stone-200 rounded-xl focus:ring-2 focus:ring-amber-500 outline-none" />
                 </div>
-              </div>
-              <div className="grid grid-cols-2 gap-4">
-                <div className="space-y-1">
-                  <label className={labelClass}>Altitude Min (m)</label>
-                  <input type="number" {...register('altitudeRange.0', { valueAsNumber: true })} className={inputClass} placeholder="e.g. 1450" />
-                </div>
-                <div className="space-y-1">
-                  <label className={labelClass}>Altitude Max (m)</label>
-                  <input type="number" {...register('altitudeRange.1', { valueAsNumber: true })} className={inputClass} placeholder="e.g. 1800" />
-                </div>
-              </div>
-              <div className="grid grid-cols-2 gap-4">
-                <div className="space-y-1">
-                  <label className={labelClass}>Varieties (comma-separated)</label>
-                  <input value={varietiesText} onChange={e => setVarietiesText(e.target.value)} className={inputClass} placeholder="Bourbon, Arabica" />
-                </div>
-                <div className="space-y-1">
-                  <label className={labelClass}>Processing Methods (comma-separated)</label>
-                  <input value={processingsText} onChange={e => setProcessingsText(e.target.value)} className={inputClass} placeholder="Fully Washed, Natural" />
-                </div>
-              </div>
-              <div className="grid grid-cols-2 gap-4">
-                <div className="space-y-1">
-                  <label className={labelClass}>Certifications (comma-separated)</label>
-                  <input value={certsText} onChange={e => setCertsText(e.target.value)} className={inputClass} placeholder="Fairtrade, Organic" />
-                </div>
-                <div className="space-y-1">
-                  <label className={labelClass}>Sustainability Focus (comma-separated)</label>
-                  <input value={sustainabilityText} onChange={e => setSustainabilityText(e.target.value)} className={inputClass} placeholder="Agroforestry, Water management" />
-                </div>
-              </div>
-              <div className="flex items-center gap-3 pt-1">
-                <input type="checkbox" id="isBocParticipant" {...register('isBocParticipant')} className="w-4 h-4 accent-amber-600" />
-                <label htmlFor="isBocParticipant" className="text-sm font-bold text-stone-700">Best of Congo Participant</label>
               </div>
             </motion.div>
           )}
 
-          {/* Step 4: Sensory Profile */}
-          {step === 4 && (
+          {step === 3 && (
             <motion.div initial={{ opacity: 0 }} animate={{ opacity: 1 }} className="space-y-4">
               <h3 className="text-lg font-bold">{t('sensoryProfile')}</h3>
-              <p className="text-stone-400 text-xs">Score each attribute 0–10 (e.g. 8.5)</p>
               <div className="grid grid-cols-5 gap-4">
-                {(['aroma', 'acidity', 'body', 'sweetness', 'aftertaste'] as const).map((metric) => (
+                {['aroma', 'acidity', 'body', 'sweetness', 'aftertaste'].map((metric) => (
                   <div key={metric} className="space-y-1">
-                    <label className="text-[10px] font-bold text-stone-400 uppercase">{t(metric)}</label>
-                    <input
-                      type="number"
-                      step="0.1"
-                      min="0"
-                      max="10"
-                      {...register(`sensoryProfile.${metric}` as any, { valueAsNumber: true })}
-                      className="w-full p-2 bg-stone-50 border border-stone-200 rounded-lg focus:ring-2 focus:ring-amber-500 outline-none text-center text-sm"
+                    <label className="text-[10px] font-bold text-stone-400 uppercase">{metric}</label>
+                    <input 
+                      type="number" 
+                      step="0.1" 
+                      {...register(`sensoryProfile.${metric}` as any, { valueAsNumber: true })} 
+                      className="w-full p-2 bg-stone-50 border border-stone-200 rounded-lg focus:ring-2 focus:ring-amber-500 outline-none text-center" 
                     />
                   </div>
                 ))}
@@ -1221,7 +1407,7 @@ function CoopPortal({ coopId, isNew = false, onComplete }: { coopId?: string, is
           )}
 
           <div className="flex justify-between pt-8 border-t border-stone-100">
-            <button
+            <button 
               type="button"
               disabled={step === 1}
               onClick={() => setStep(s => s - 1)}
@@ -1229,8 +1415,8 @@ function CoopPortal({ coopId, isNew = false, onComplete }: { coopId?: string, is
             >
               {t('previous')}
             </button>
-            {step < TOTAL_STEPS ? (
-              <button
+            {step < 3 ? (
+              <button 
                 type="button"
                 onClick={() => setStep(s => s + 1)}
                 className="px-8 py-2 bg-stone-900 text-white rounded-xl font-bold hover:bg-stone-800 transition-all"
@@ -1238,7 +1424,7 @@ function CoopPortal({ coopId, isNew = false, onComplete }: { coopId?: string, is
                 {t('next')}
               </button>
             ) : (
-              <button
+              <button 
                 type="submit"
                 className="px-8 py-2 bg-amber-600 text-white rounded-xl font-bold hover:bg-amber-700 transition-all"
               >
@@ -1420,989 +1606,18 @@ function UserProfileModal({ isOpen, onClose, profile, user }: { isOpen: boolean,
   );
 }
 
-// --- Best of Congo Admin ---
-
-const BocBuyerSchema = z.object({
-  name: z.string().min(1, 'Buyer name is required'),
-  logoUrl: z.string().url().optional().or(z.literal('')),
-});
-
-const BocParticipantSchema = z.object({
-  coopId: z.string().min(1, 'Select a cooperative'),
-  qtySubmitted: z.number().min(0, 'Must be ≥ 0'),
-  scores: z.object({
-    average: z.number().min(0).max(100),
-  }),
-  qtySold: z.number().min(0, 'Must be ≥ 0'),
-  buyers: z.array(BocBuyerSchema),
-});
-
-const BocEditionSchema = z.object({
-  year: z.number().int().min(2000).max(2100),
-  theme: z.string().optional(),
-  participants: z.array(BocParticipantSchema),
-});
-
-type BocEditionFormData = z.infer<typeof BocEditionSchema>;
-
-function ParticipantBuyersField({ control, register, participantIndex, errors }: {
-  control: any;
-  register: any;
-  participantIndex: number;
-  errors: any;
-}) {
-  const { fields, append, remove } = useFieldArray({
-    control,
-    name: `participants.${participantIndex}.buyers`,
-  });
-
-  return (
-    <div className="mt-3 space-y-2">
-      <p className="text-xs font-bold text-stone-500 uppercase tracking-widest">Buyers</p>
-      {fields.map((buyerField, bi) => (
-        <div key={buyerField.id} className="flex gap-2 items-start">
-          <input
-            {...register(`participants.${participantIndex}.buyers.${bi}.name`)}
-            placeholder="Buyer name"
-            className="flex-1 px-3 py-1.5 text-sm border border-stone-200 rounded-lg focus:outline-none focus:ring-2 focus:ring-amber-500"
-          />
-          <input
-            {...register(`participants.${participantIndex}.buyers.${bi}.logoUrl`)}
-            placeholder="Logo URL (optional)"
-            className="flex-1 px-3 py-1.5 text-sm border border-stone-200 rounded-lg focus:outline-none focus:ring-2 focus:ring-amber-500"
-          />
-          <button
-            type="button"
-            onClick={() => remove(bi)}
-            className="p-1.5 text-stone-400 hover:text-red-500 transition-colors"
-          >
-            <X size={14} />
-          </button>
-        </div>
-      ))}
-      <button
-        type="button"
-        onClick={() => append({ name: '', logoUrl: '' })}
-        className="flex items-center gap-1 text-xs font-bold text-amber-700 hover:text-amber-900 transition-colors"
-      >
-        <Plus size={12} />
-        Add buyer
-      </button>
-    </div>
-  );
-}
-
-function BocEditionAdmin({ cooperatives }: { cooperatives: CoffeeCooperative[] }) {
-  const [loadingYear, setLoadingYear] = useState(false);
-  const [saving, setSaving] = useState(false);
-
-  const { register, handleSubmit, control, reset, watch, setValue, formState: { errors } } = useForm<BocEditionFormData>({
-    resolver: zodResolver(BocEditionSchema),
-    defaultValues: { year: new Date().getFullYear(), theme: '', participants: [] },
-  });
-
-  const { fields: participantFields, append: appendParticipant, remove: removeParticipant } = useFieldArray({
-    control,
-    name: 'participants',
-  });
-
-  const watchedYear = watch('year');
-
-  const loadEdition = async (year: number) => {
-    if (!year || year < 2000 || year > 2100) return;
-    setLoadingYear(true);
-    try {
-      const editionRef = doc(db, 'bestofcongo_editions', String(year));
-      const editionSnap = await getDoc(editionRef);
-      const participantsSnap = await getDocs(collection(db, 'bestofcongo_editions', String(year), 'participants'));
-
-      if (editionSnap.exists()) {
-        const editionData = editionSnap.data();
-        const participants = participantsSnap.docs.map(d => d.data() as EditionParticipant);
-        reset({
-          year,
-          theme: editionData.theme || '',
-          participants: participants.map(p => ({
-            coopId: p.coopId,
-            qtySubmitted: p.qtySubmitted,
-            scores: { average: p.scores.average },
-            qtySold: p.qtySold,
-            buyers: p.buyers || [],
-          })),
-        });
-        toast.success(`Edition ${year} loaded`);
-      } else {
-        reset({ year, theme: '', participants: [] });
-        toast(`No existing edition for ${year} — starting fresh.`);
-      }
-    } catch (error) {
-      handleFirestoreError(error, OperationType.GET, `bestofcongo_editions/${year}`);
-    } finally {
-      setLoadingYear(false);
-    }
-  };
-
-  const onSubmit = async (data: BocEditionFormData) => {
-    setSaving(true);
-    const yearStr = String(data.year);
-    const editionRef = doc(db, 'bestofcongo_editions', yearStr);
-
-    try {
-      // 1. Save edition doc
-      await setDoc(editionRef, { year: data.year, theme: data.theme || '' }, { merge: true });
-
-      // 2. Delete-then-write participants in a single WriteBatch
-      const existingSnap = await getDocs(collection(db, 'bestofcongo_editions', yearStr, 'participants'));
-      const batch = writeBatch(db);
-
-      existingSnap.docs.forEach(d => batch.delete(d.ref));
-      data.participants.forEach(p => {
-        const ref = doc(db, 'bestofcongo_editions', yearStr, 'participants', p.coopId);
-        const coop = cooperatives.find(c => c.id === p.coopId);
-        batch.set(ref, {
-          coopId: p.coopId,
-          coopName: coop?.name || '',
-          qtySubmitted: p.qtySubmitted,
-          scores: { average: p.scores.average },
-          qtySold: p.qtySold,
-          buyers: p.buyers.filter(b => b.name.trim() !== ''),
-        });
-      });
-
-      // Also set isBocParticipant: true on each cooperative doc
-      data.participants.forEach(p => {
-        const coopRef = doc(db, 'cooperatives', p.coopId);
-        batch.update(coopRef, { isBocParticipant: true });
-      });
-
-      await batch.commit();
-      toast.success(`Edition ${data.year} saved (${data.participants.length} participants)`);
-    } catch (error) {
-      console.error('Error saving edition:', error);
-      toast.error('Save failed — check console');
-    } finally {
-      setSaving(false);
-    }
-  };
-
-  return (
-    <div className="max-w-4xl mx-auto p-6 space-y-8">
-      <div className="flex items-center justify-between">
-        <div>
-          <h2 className="text-2xl font-black text-stone-900">Best of Congo — Admin</h2>
-          <p className="text-stone-500 text-sm">Create or edit a competition edition and its participant results.</p>
-        </div>
-        <div className="p-3 bg-amber-100 rounded-2xl text-amber-900">
-          <Award size={24} />
-        </div>
-      </div>
-
-      <form onSubmit={handleSubmit(onSubmit)} className="space-y-8">
-        {/* Edition header */}
-        <div className="bg-white p-6 rounded-3xl border border-stone-200 shadow-sm space-y-4">
-          <h3 className="text-sm font-black text-stone-400 uppercase tracking-widest">Edition</h3>
-          <div className="flex gap-4 items-end">
-            <div className="flex-1">
-              <label className="block text-xs font-bold text-stone-600 mb-1">Year *</label>
-              <input
-                type="number"
-                {...register('year', { valueAsNumber: true })}
-                className="w-full px-3 py-2 border border-stone-200 rounded-xl focus:outline-none focus:ring-2 focus:ring-amber-500"
-              />
-              {errors.year && <p className="text-xs text-red-500 mt-1">{errors.year.message as string}</p>}
-            </div>
-            <div className="flex-1">
-              <label className="block text-xs font-bold text-stone-600 mb-1">Theme (optional)</label>
-              <input
-                {...register('theme')}
-                placeholder="e.g. Terroir & Traceability"
-                className="w-full px-3 py-2 border border-stone-200 rounded-xl focus:outline-none focus:ring-2 focus:ring-amber-500"
-              />
-            </div>
-            <button
-              type="button"
-              onClick={() => loadEdition(watchedYear)}
-              disabled={loadingYear}
-              className="px-4 py-2 bg-stone-100 text-stone-700 rounded-xl text-sm font-bold hover:bg-stone-200 transition-all disabled:opacity-50 flex items-center gap-2"
-            >
-              {loadingYear ? <Loader2 size={14} className="animate-spin" /> : null}
-              Load
-            </button>
-          </div>
-        </div>
-
-        {/* Participants */}
-        <div className="bg-white p-6 rounded-3xl border border-stone-200 shadow-sm space-y-6">
-          <div className="flex items-center justify-between">
-            <h3 className="text-sm font-black text-stone-400 uppercase tracking-widest">
-              Participants ({participantFields.length})
-            </h3>
-            <button
-              type="button"
-              onClick={() => appendParticipant({ coopId: '', qtySubmitted: 0, scores: { average: 0 }, qtySold: 0, buyers: [] })}
-              className="flex items-center gap-2 px-3 py-1.5 bg-amber-600 text-white rounded-lg text-sm font-bold hover:bg-amber-700 transition-all"
-            >
-              <Plus size={14} />
-              Add participant
-            </button>
-          </div>
-
-          {participantFields.length === 0 && (
-            <p className="text-stone-400 text-sm text-center py-8">No participants yet. Click "Add participant" or load an existing edition.</p>
-          )}
-
-          {participantFields.map((field, index) => (
-            <div key={field.id} className="border border-stone-100 rounded-2xl p-4 space-y-3 bg-stone-50">
-              <div className="flex items-center justify-between">
-                <span className="text-xs font-bold text-stone-500">#{index + 1}</span>
-                <button
-                  type="button"
-                  onClick={() => removeParticipant(index)}
-                  className="p-1 text-stone-400 hover:text-red-500 transition-colors"
-                >
-                  <Trash2 size={14} />
-                </button>
-              </div>
-
-              <div className="grid grid-cols-2 gap-3 sm:grid-cols-4">
-                <div className="col-span-2">
-                  <label className="block text-xs font-bold text-stone-600 mb-1">Cooperative *</label>
-                  <select
-                    {...register(`participants.${index}.coopId`)}
-                    className="w-full px-3 py-2 text-sm border border-stone-200 rounded-lg focus:outline-none focus:ring-2 focus:ring-amber-500 bg-white"
-                  >
-                    <option value="">— select —</option>
-                    {cooperatives.map(c => (
-                      <option key={c.id} value={c.id}>{c.name}</option>
-                    ))}
-                  </select>
-                  {errors.participants?.[index]?.coopId && (
-                    <p className="text-xs text-red-500 mt-1">{errors.participants[index]?.coopId?.message as string}</p>
-                  )}
-                </div>
-
-                <div>
-                  <label className="block text-xs font-bold text-stone-600 mb-1">Avg Score *</label>
-                  <input
-                    type="number"
-                    step="0.01"
-                    {...register(`participants.${index}.scores.average`, { valueAsNumber: true })}
-                    className="w-full px-3 py-2 text-sm border border-stone-200 rounded-lg focus:outline-none focus:ring-2 focus:ring-amber-500"
-                  />
-                </div>
-
-                <div>
-                  <label className="block text-xs font-bold text-stone-600 mb-1">Qty Submitted (kg)</label>
-                  <input
-                    type="number"
-                    step="0.01"
-                    {...register(`participants.${index}.qtySubmitted`, { valueAsNumber: true })}
-                    className="w-full px-3 py-2 text-sm border border-stone-200 rounded-lg focus:outline-none focus:ring-2 focus:ring-amber-500"
-                  />
-                </div>
-
-                <div>
-                  <label className="block text-xs font-bold text-stone-600 mb-1">Qty Sold (kg)</label>
-                  <input
-                    type="number"
-                    step="0.01"
-                    {...register(`participants.${index}.qtySold`, { valueAsNumber: true })}
-                    className="w-full px-3 py-2 text-sm border border-stone-200 rounded-lg focus:outline-none focus:ring-2 focus:ring-amber-500"
-                  />
-                </div>
-              </div>
-
-              <ParticipantBuyersField
-                control={control}
-                register={register}
-                participantIndex={index}
-                errors={errors}
-              />
-            </div>
-          ))}
-        </div>
-
-        <div className="flex justify-end">
-          <button
-            type="submit"
-            disabled={saving}
-            className="flex items-center gap-2 px-6 py-3 bg-stone-900 text-white rounded-xl font-bold hover:bg-stone-800 transition-all disabled:opacity-50"
-          >
-            {saving ? <Loader2 size={16} className="animate-spin" /> : <Check size={16} />}
-            {saving ? 'Saving…' : 'Save edition'}
-          </button>
-        </div>
-      </form>
-    </div>
-  );
-}
-
-// --- BoC Leaderboard ---
-
-type RankedParticipant = EditionParticipant & { coopName: string; rank: number };
-
-function BocLeaderboard({ onCoopSelect }: { onCoopSelect: (coopId: string) => void }) {
-  const [editions, setEditions] = useState<BestOfCongoEdition[]>([]);
-  const [selectedYear, setSelectedYear] = useState<number | null>(null);
-  const [ranked, setRanked] = useState<RankedParticipant[]>([]);
-  const [loadingEditions, setLoadingEditions] = useState(true);
-  const [loadingParticipants, setLoadingParticipants] = useState(false);
-
-  useEffect(() => {
-    getDocs(collection(db, 'bestofcongo_editions'))
-      .then(snap => {
-        const eds = snap.docs
-          .map(d => d.data() as BestOfCongoEdition)
-          .sort((a, b) => b.year - a.year);
-        setEditions(eds);
-        if (eds.length > 0) setSelectedYear(eds[0].year);
-      })
-      .catch(err => handleFirestoreError(err, OperationType.LIST, 'bestofcongo_editions'))
-      .finally(() => setLoadingEditions(false));
-  }, []);
-
-  useEffect(() => {
-    if (!selectedYear) return;
-    setLoadingParticipants(true);
-    getDocs(collection(db, 'bestofcongo_editions', String(selectedYear), 'participants'))
-      .then(snap => {
-        const sorted = snap.docs
-          .map(d => d.data() as EditionParticipant & { coopName: string })
-          .sort((a, b) =>
-            b.scores.average - a.scores.average ||
-            (a.coopName ?? '').localeCompare(b.coopName ?? '')
-          )
-          .map((p, i) => ({ ...p, rank: i + 1 }));
-        setRanked(sorted);
-      })
-      .catch(err => handleFirestoreError(err, OperationType.LIST, `bestofcongo_editions/${selectedYear}/participants`))
-      .finally(() => setLoadingParticipants(false));
-  }, [selectedYear]);
-
-  const handleExport = () => {
-    if (!selectedYear || ranked.length === 0) return;
-    downloadCsv(
-      [
-        ['Rank', 'Cooperative', 'Avg Score', 'Qty Submitted (kg)', 'Qty Sold (kg)', 'Buyers'],
-        ...ranked.map(p => [
-          p.rank,
-          p.coopName,
-          p.scores.average,
-          p.qtySubmitted,
-          p.qtySold,
-          p.buyers.map(b => b.name).join('; '),
-        ]),
-      ],
-      `boc_leaderboard_${selectedYear}.csv`
-    );
-  };
-
-  if (loadingEditions) {
-    return <div className="p-12 text-center"><Loader2 className="animate-spin mx-auto text-amber-600" /></div>;
-  }
-
-  if (editions.length === 0) {
-    return (
-      <div className="max-w-4xl mx-auto p-6">
-        <div className="bg-white border border-stone-200 rounded-2xl p-12 text-center">
-          <div className="w-14 h-14 bg-stone-100 rounded-full flex items-center justify-center mx-auto mb-4 text-stone-300">
-            <Award size={28} />
-          </div>
-          <p className="font-bold text-stone-900">No editions yet</p>
-          <p className="text-stone-500 text-sm mt-1">An admin needs to create the first Best of Congo edition.</p>
-        </div>
-      </div>
-    );
-  }
-
-  return (
-    <div className="max-w-5xl mx-auto p-6 space-y-8">
-      {/* Header */}
-      <div className="flex items-center justify-between">
-        <div>
-          <p className="text-xs font-black text-stone-400 uppercase tracking-widest mb-1">Congo Agri Platform</p>
-          <h2 className="text-3xl font-black text-stone-900 tracking-tight">Best of Congo</h2>
-          <p className="text-stone-500 text-sm mt-1">Annual specialty coffee competition — verified jury scores</p>
-        </div>
-        <button
-          onClick={handleExport}
-          disabled={ranked.length === 0}
-          className="flex items-center gap-2 px-4 py-2 bg-stone-900 text-white rounded-xl text-sm font-bold hover:bg-stone-800 transition-all disabled:opacity-40"
-        >
-          <Download size={14} />
-          Export CSV
-        </button>
-      </div>
-
-      {/* Edition selector — tabs for ≤5 editions */}
-      {editions.length <= 5 ? (
-        <div className="flex gap-1 border-b border-stone-200">
-          {editions.map(e => (
-            <button
-              key={e.year}
-              onClick={() => setSelectedYear(e.year)}
-              className={cn(
-                "px-5 py-2.5 text-sm font-bold border-b-2 -mb-px transition-all",
-                selectedYear === e.year
-                  ? "border-amber-600 text-amber-700"
-                  : "border-transparent text-stone-400 hover:text-stone-700"
-              )}
-            >
-              {e.year}
-            </button>
-          ))}
-        </div>
-      ) : (
-        <select
-          value={selectedYear ?? ''}
-          onChange={e => setSelectedYear(Number(e.target.value))}
-          className="px-4 py-2 border border-stone-200 rounded-xl text-sm font-bold focus:outline-none focus:ring-2 focus:ring-amber-500"
-        >
-          {editions.map(e => <option key={e.year} value={e.year}>{e.year}</option>)}
-        </select>
-      )}
-
-      {/* Leaderboard */}
-      {loadingParticipants ? (
-        <div className="p-12 text-center"><Loader2 className="animate-spin mx-auto text-amber-600" /></div>
-      ) : ranked.length === 0 ? (
-        <div className="bg-white border border-stone-200 rounded-2xl p-10 text-center text-stone-400 text-sm">
-          No participants recorded for {selectedYear}.
-        </div>
-      ) : (
-        <div className="bg-white rounded-3xl border border-stone-200 shadow-sm overflow-hidden">
-          <table className="w-full text-sm">
-            <thead>
-              <tr className="bg-stone-50 border-b border-stone-100">
-                <th className="px-4 py-3 text-left text-xs font-black text-stone-400 uppercase tracking-widest w-12">#</th>
-                <th className="px-4 py-3 text-left text-xs font-black text-stone-400 uppercase tracking-widest">Cooperative</th>
-                <th className="px-4 py-3 text-left text-xs font-black text-stone-400 uppercase tracking-widest">Avg Score</th>
-                <th className="px-4 py-3 text-left text-xs font-black text-stone-400 uppercase tracking-widest">Submitted (kg)</th>
-                <th className="px-4 py-3 text-left text-xs font-black text-stone-400 uppercase tracking-widest">Sold (kg)</th>
-                <th className="px-4 py-3 text-left text-xs font-black text-stone-400 uppercase tracking-widest">Buyers</th>
-              </tr>
-            </thead>
-            <tbody>
-              {ranked.map(p => (
-                <tr
-                  key={p.coopId}
-                  onClick={() => onCoopSelect(p.coopId)}
-                  className="border-b border-stone-50 hover:bg-amber-50 cursor-pointer transition-colors group"
-                >
-                  <td className="px-4 py-3">
-                    <span className={cn(
-                      "inline-flex items-center justify-center w-7 h-7 rounded-full text-xs font-black",
-                      p.rank === 1 ? "bg-amber-400 text-white" :
-                      p.rank === 2 ? "bg-stone-300 text-stone-800" :
-                      p.rank === 3 ? "bg-amber-700 text-white" :
-                      "bg-stone-100 text-stone-500"
-                    )}>
-                      {p.rank}
-                    </span>
-                  </td>
-                  <td className="px-4 py-3 font-bold text-stone-900 group-hover:text-amber-700 transition-colors">
-                    {p.coopName}
-                  </td>
-                  <td className="px-4 py-3">
-                    <span className="font-bold text-amber-700 text-base">{p.scores.average}</span>
-                    <span className="text-xs text-stone-400 ml-1">pts</span>
-                  </td>
-                  <td className="px-4 py-3 text-stone-600">{p.qtySubmitted.toLocaleString()}</td>
-                  <td className="px-4 py-3 text-stone-600">{p.qtySold.toLocaleString()}</td>
-                  <td className="px-4 py-3">
-                    <div className="flex flex-wrap gap-1">
-                      {p.buyers.length === 0 ? (
-                        <span className="text-stone-300">—</span>
-                      ) : (
-                        p.buyers.map((b, i) => (
-                          b.logoUrl ? (
-                            <img
-                              key={i}
-                              src={b.logoUrl}
-                              alt={b.name}
-                              title={b.name}
-                              className="h-6 w-auto max-w-[80px] object-contain rounded"
-                              onError={onLogoError}
-                            />
-                          ) : (
-                            <span key={i} className="px-2 py-0.5 bg-stone-100 text-stone-700 text-xs rounded-md">
-                              {b.name}
-                            </span>
-                          )
-                        ))
-                      )}
-                    </div>
-                  </td>
-                </tr>
-              ))}
-            </tbody>
-          </table>
-        </div>
-      )}
-    </div>
-  );
-}
-
-// --- BoC History Tab ---
-
-function BocHistoryTab({ coopId }: { coopId: string }) {
-  const [rows, setRows] = useState<{ year: number; participant: EditionParticipant }[]>([]);
-  const [loading, setLoading] = useState(true);
-  const [indexError, setIndexError] = useState(false);
-
-  useEffect(() => {
-    if (!coopId) return;
-    setLoading(true);
-    setIndexError(false);
-
-    getDocs(
-      query(collectionGroup(db, 'participants'), where('coopId', '==', coopId))
-    )
-      .then(snap => {
-        const results = snap.docs.map(d => ({
-          year: parseInt(d.ref.parent.parent?.id ?? '0', 10),
-          participant: d.data() as EditionParticipant,
-        }));
-        results.sort((a, b) => a.year - b.year);
-        setRows(results);
-      })
-      .catch(err => {
-        const msg = err instanceof Error ? err.message : String(err);
-        if (msg.includes('index') || msg.includes('requires an index')) {
-          setIndexError(true);
-        } else {
-          handleFirestoreError(err, OperationType.LIST, 'bestofcongo_editions/*/participants');
-        }
-      })
-      .finally(() => setLoading(false));
-  }, [coopId]);
-
-  if (loading) {
-    return (
-      <div className="p-12 text-center">
-        <Loader2 className="animate-spin mx-auto text-amber-600" />
-      </div>
-    );
-  }
-
-  if (indexError) {
-    return (
-      <div className="bg-amber-50 border border-amber-200 rounded-2xl p-6 text-sm text-amber-900">
-        <p className="font-bold mb-1">Firestore index required</p>
-        <p>Create a collection group index for <code>participants.coopId</code> in the Firestore console, then reload.</p>
-      </div>
-    );
-  }
-
-  if (rows.length === 0) {
-    return (
-      <div className="bg-white border border-stone-200 rounded-2xl p-12 text-center">
-        <div className="w-14 h-14 bg-stone-100 rounded-full flex items-center justify-center mx-auto mb-4 text-stone-300">
-          <Award size={28} />
-        </div>
-        <p className="font-bold text-stone-900">No competition history</p>
-        <p className="text-stone-500 text-sm mt-1">This cooperative has not participated in the Best of Congo competition yet.</p>
-      </div>
-    );
-  }
-
-  const chartData = rows.map(r => ({ year: r.year, score: r.participant.scores.average }));
-
-  return (
-    <div className="space-y-6">
-      {/* Score trend chart */}
-      <div className="bg-white p-6 rounded-2xl border border-stone-200 shadow-sm">
-        <h3 className="text-sm font-black text-stone-400 uppercase tracking-widest mb-4">Score trend</h3>
-        <ResponsiveContainer width="100%" height={200}>
-          <LineChart data={chartData} margin={{ top: 5, right: 20, left: 0, bottom: 5 }}>
-            <CartesianGrid strokeDasharray="3 3" stroke="#f5f5f4" />
-            <XAxis dataKey="year" tick={{ fontSize: 12 }} />
-            <YAxis domain={['auto', 'auto']} tick={{ fontSize: 12 }} />
-            <Tooltip
-              formatter={(value) => [`${value ?? '—'} pts`, 'Avg Score']}
-              labelFormatter={(label) => `${label}`}
-            />
-            <Line
-              type="monotone"
-              dataKey="score"
-              stroke="#d97706"
-              strokeWidth={2}
-              dot={{ fill: '#d97706', r: 4 }}
-              activeDot={{ r: 6 }}
-            />
-          </LineChart>
-        </ResponsiveContainer>
-      </div>
-
-      {/* Year-by-year table */}
-      <div className="bg-white rounded-2xl border border-stone-200 shadow-sm overflow-hidden">
-        <table className="w-full text-sm">
-          <thead>
-            <tr className="bg-stone-50 border-b border-stone-100">
-              <th className="px-4 py-3 text-left text-xs font-black text-stone-400 uppercase tracking-widest">Year</th>
-              <th className="px-4 py-3 text-left text-xs font-black text-stone-400 uppercase tracking-widest">Avg Score</th>
-              <th className="px-4 py-3 text-left text-xs font-black text-stone-400 uppercase tracking-widest">Submitted (kg)</th>
-              <th className="px-4 py-3 text-left text-xs font-black text-stone-400 uppercase tracking-widest">Sold (kg)</th>
-              <th className="px-4 py-3 text-left text-xs font-black text-stone-400 uppercase tracking-widest">Buyers</th>
-            </tr>
-          </thead>
-          <tbody>
-            {rows.map(({ year, participant }) => (
-              <tr key={year} className="border-b border-stone-50 hover:bg-stone-50 transition-colors">
-                <td className="px-4 py-3 font-bold text-stone-900">{year}</td>
-                <td className="px-4 py-3">
-                  <span className="font-bold text-amber-700">{participant.scores.average} pts</span>
-                </td>
-                <td className="px-4 py-3 text-stone-600">{participant.qtySubmitted.toLocaleString()}</td>
-                <td className="px-4 py-3 text-stone-600">{participant.qtySold.toLocaleString()}</td>
-                <td className="px-4 py-3">
-                  <div className="flex flex-wrap gap-1">
-                    {participant.buyers.length === 0 ? (
-                      <span className="text-stone-400">—</span>
-                    ) : (
-                      participant.buyers.map((b, i) => (
-                        <span key={i} className="px-2 py-0.5 bg-stone-100 text-stone-700 text-xs rounded-md">
-                          {b.name}
-                        </span>
-                      ))
-                    )}
-                  </div>
-                </td>
-              </tr>
-            ))}
-          </tbody>
-        </table>
-      </div>
-    </div>
-  );
-}
-
-// --- Faceted Filter Panel ---
-
-interface FacetFilters {
-  searchQuery: string;
-  selectedCerts: string[];
-  selectedProcessing: string[];
-  altMin: string;
-  altMax: string;
-  minScore: string;
-  bocOnly: boolean;
-}
-
-function FacetedFilterPanel({
-  filters,
-  onChange,
-  processingOptions,
-  totalCount,
-  filteredCount,
-}: {
-  filters: FacetFilters;
-  onChange: (f: Partial<FacetFilters>) => void;
-  processingOptions: string[];
-  totalCount: number;
-  filteredCount: number;
-}) {
-  const [open, setOpen] = useState(false);
-  const hasActiveFilters =
-    filters.selectedCerts.length > 0 ||
-    filters.selectedProcessing.length > 0 ||
-    filters.altMin !== '' ||
-    filters.altMax !== '' ||
-    filters.minScore !== '' ||
-    filters.bocOnly;
-
-  const toggleCert = (c: string) =>
-    onChange({ selectedCerts: filters.selectedCerts.includes(c) ? filters.selectedCerts.filter(x => x !== c) : [...filters.selectedCerts, c] });
-
-  const toggleProcessing = (m: string) =>
-    onChange({ selectedProcessing: filters.selectedProcessing.includes(m) ? filters.selectedProcessing.filter(x => x !== m) : [...filters.selectedProcessing, m] });
-
-  const clearAll = () =>
-    onChange({ selectedCerts: [], selectedProcessing: [], altMin: '', altMax: '', minScore: '', bocOnly: false });
-
-  return (
-    <div className="space-y-2">
-      {/* Search + filter toggle row */}
-      <div className="flex gap-2">
-        <div className="relative flex-1">
-          <Search size={14} className="absolute left-3 top-1/2 -translate-y-1/2 text-stone-400 pointer-events-none" />
-          <input
-            value={filters.searchQuery}
-            onChange={e => onChange({ searchQuery: e.target.value })}
-            placeholder="Search cooperatives…"
-            className="w-full pl-8 pr-3 py-2 text-sm border border-stone-200 rounded-xl focus:outline-none focus:ring-2 focus:ring-amber-500 bg-white"
-          />
-        </div>
-        <button
-          onClick={() => setOpen(o => !o)}
-          className={cn(
-            "p-2 rounded-xl border transition-all flex items-center gap-1 text-xs font-bold",
-            open || hasActiveFilters
-              ? "bg-amber-600 text-white border-amber-600"
-              : "bg-white text-stone-500 border-stone-200 hover:border-stone-300"
-          )}
-        >
-          <Filter size={14} />
-          {hasActiveFilters && (
-            <span className="w-4 h-4 bg-white text-amber-700 rounded-full text-[10px] flex items-center justify-center font-black">
-              {[filters.selectedCerts.length > 0, filters.selectedProcessing.length > 0, filters.altMin !== '', filters.altMax !== '', filters.minScore !== '', filters.bocOnly].filter(Boolean).length}
-            </span>
-          )}
-        </button>
-      </div>
-
-      {/* Result count */}
-      <p className="text-[10px] font-bold text-stone-400 uppercase tracking-widest">
-        {filteredCount === totalCount
-          ? `${totalCount} cooperatives`
-          : `${filteredCount} of ${totalCount} cooperatives`}
-      </p>
-
-      {/* Filter panel */}
-      {open && (
-        <div className="bg-white border border-stone-200 rounded-2xl p-4 space-y-5 shadow-sm">
-          {hasActiveFilters && (
-            <button onClick={clearAll} className="text-xs font-bold text-red-500 hover:text-red-700 flex items-center gap-1">
-              <X size={12} /> Clear all filters
-            </button>
-          )}
-
-          {/* Certifications */}
-          <div>
-            <p className="text-[10px] font-black text-stone-400 uppercase tracking-widest mb-2">Certifications</p>
-            <div className="flex flex-wrap gap-1.5">
-              {CANONICAL_CERTIFICATIONS.map(cert => (
-                <button
-                  key={cert}
-                  onClick={() => toggleCert(cert)}
-                  className={cn(
-                    "px-2.5 py-1 text-xs font-bold rounded-lg border transition-all",
-                    filters.selectedCerts.includes(cert)
-                      ? "bg-amber-600 text-white border-amber-600"
-                      : "bg-stone-50 text-stone-600 border-stone-200 hover:border-amber-400"
-                  )}
-                >
-                  {cert}
-                </button>
-              ))}
-            </div>
-          </div>
-
-          {/* Processing methods */}
-          {processingOptions.length > 0 && (
-            <div>
-              <p className="text-[10px] font-black text-stone-400 uppercase tracking-widest mb-2">Processing Method</p>
-              <div className="flex flex-wrap gap-1.5">
-                {processingOptions.map(m => (
-                  <button
-                    key={m}
-                    onClick={() => toggleProcessing(m)}
-                    className={cn(
-                      "px-2.5 py-1 text-xs font-bold rounded-lg border transition-all",
-                      filters.selectedProcessing.includes(m)
-                        ? "bg-stone-900 text-white border-stone-900"
-                        : "bg-stone-50 text-stone-600 border-stone-200 hover:border-stone-400"
-                    )}
-                  >
-                    {m}
-                  </button>
-                ))}
-              </div>
-            </div>
-          )}
-
-          {/* Altitude range */}
-          <div>
-            <p className="text-[10px] font-black text-stone-400 uppercase tracking-widest mb-2">Altitude (m)</p>
-            <div className="flex items-center gap-2">
-              <input
-                type="number"
-                value={filters.altMin}
-                onChange={e => onChange({ altMin: e.target.value })}
-                placeholder="Min"
-                className="w-full px-3 py-1.5 text-sm border border-stone-200 rounded-lg focus:outline-none focus:ring-2 focus:ring-amber-500"
-              />
-              <span className="text-stone-400 text-xs">–</span>
-              <input
-                type="number"
-                value={filters.altMax}
-                onChange={e => onChange({ altMax: e.target.value })}
-                placeholder="Max"
-                className="w-full px-3 py-1.5 text-sm border border-stone-200 rounded-lg focus:outline-none focus:ring-2 focus:ring-amber-500"
-              />
-            </div>
-          </div>
-
-          {/* Min cupping score */}
-          <div>
-            <p className="text-[10px] font-black text-stone-400 uppercase tracking-widest mb-2">Min Cupping Score</p>
-            <input
-              type="number"
-              value={filters.minScore}
-              onChange={e => onChange({ minScore: e.target.value })}
-              placeholder="e.g. 84"
-              min={0}
-              max={100}
-              className="w-full px-3 py-1.5 text-sm border border-stone-200 rounded-lg focus:outline-none focus:ring-2 focus:ring-amber-500"
-            />
-          </div>
-
-          {/* BoC participant toggle */}
-          <div className="flex items-center justify-between">
-            <div>
-              <p className="text-xs font-bold text-stone-700">Best of Congo participants only</p>
-              <p className="text-[10px] text-stone-400">Filter to competition-verified coops</p>
-            </div>
-            <button
-              onClick={() => onChange({ bocOnly: !filters.bocOnly })}
-              className={cn(
-                "relative w-10 h-6 rounded-full transition-colors",
-                filters.bocOnly ? "bg-amber-600" : "bg-stone-200"
-              )}
-            >
-              <span className={cn(
-                "absolute top-1 w-4 h-4 bg-white rounded-full shadow transition-transform",
-                filters.bocOnly ? "translate-x-5" : "translate-x-1"
-              )} />
-            </button>
-          </div>
-        </div>
-      )}
-    </div>
-  );
-}
-
-// --- How It Works Modal ---
-
-function HowItWorksModal({ open, onClose }: { open: boolean; onClose: () => void }) {
-  const { t } = useTranslation();
-  const steps = [
-    { num: 1, icon: Upload, title: t('step1Title'), desc: t('step1Desc'), color: 'bg-amber-100 text-amber-700' },
-    { num: 2, icon: Loader2, title: t('step2Title'), desc: t('step2Desc'), color: 'bg-blue-100 text-blue-700' },
-    { num: 3, icon: Shield, title: t('step3Title'), desc: t('step3Desc'), color: 'bg-green-100 text-green-700' },
-    { num: 4, icon: Globe, title: t('step4Title'), desc: t('step4Desc'), color: 'bg-stone-100 text-stone-700' },
-  ];
-
-  return (
-    <AnimatePresence>
-      {open && (
-        <motion.div
-          initial={{ opacity: 0 }}
-          animate={{ opacity: 1 }}
-          exit={{ opacity: 0 }}
-          className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/50 backdrop-blur-sm"
-          onClick={onClose}
-        >
-          <motion.div
-            initial={{ opacity: 0, scale: 0.95, y: 16 }}
-            animate={{ opacity: 1, scale: 1, y: 0 }}
-            exit={{ opacity: 0, scale: 0.95, y: 16 }}
-            transition={{ duration: 0.2 }}
-            className="bg-white rounded-2xl shadow-2xl max-w-2xl w-full p-8 relative"
-            onClick={e => e.stopPropagation()}
-          >
-            <button
-              onClick={onClose}
-              className="absolute top-4 right-4 p-2 text-stone-400 hover:text-stone-700 transition-colors rounded-lg hover:bg-stone-100"
-            >
-              <X size={18} />
-            </button>
-
-            <div className="mb-8">
-              <div className="flex items-center gap-3 mb-3">
-                <div className="w-9 h-9 bg-amber-900 rounded-lg flex items-center justify-center">
-                  <Coffee size={18} className="text-white" />
-                </div>
-                <h2 className="text-2xl font-black text-stone-900">{t('howItWorksTitle')}</h2>
-              </div>
-              <p className="text-stone-500 text-sm leading-relaxed">{t('howItWorksSubtitle')}</p>
-            </div>
-
-            {/* Pipeline steps */}
-            <div className="space-y-4">
-              {steps.map((step, idx) => (
-                <div key={step.num} className="flex gap-4 items-start">
-                  <div className="flex flex-col items-center gap-1 shrink-0">
-                    <div className={cn('w-9 h-9 rounded-xl flex items-center justify-center', step.color)}>
-                      <step.icon size={16} />
-                    </div>
-                    {idx < steps.length - 1 && (
-                      <div className="w-px h-6 bg-stone-200" />
-                    )}
-                  </div>
-                  <div className="pb-1">
-                    <p className="text-xs font-black text-stone-400 uppercase tracking-widest mb-0.5">Step {step.num}</p>
-                    <p className="font-bold text-stone-900 text-sm mb-1">{step.title}</p>
-                    <p className="text-stone-500 text-xs leading-relaxed">{step.desc}</p>
-                  </div>
-                </div>
-              ))}
-            </div>
-
-            <div className="mt-8 pt-6 border-t border-stone-100 flex justify-end">
-              <button
-                onClick={onClose}
-                className="px-6 py-2.5 bg-amber-900 text-white rounded-xl text-sm font-bold hover:bg-amber-800 transition-colors"
-              >
-                {t('close')}
-              </button>
-            </div>
-          </motion.div>
-        </motion.div>
-      )}
-    </AnimatePresence>
-  );
-}
-
 function AppContent() {
   const { t } = useTranslation();
   const [selectedCoopId, setSelectedCoopId] = useState<string | null>(null);
-  const [detailTab, setDetailTab] = useState<'overview' | 'boc-history'>('overview');
   const [comparisonIds, setComparisonIds] = useState<string[]>([]);
   const [isProfileModalOpen, setIsProfileModalOpen] = useState(false);
-  const [isAboutOpen, setIsAboutOpen] = useState(false);
-  const [currentView, setCurrentView] = useState<'directory' | 'comparison' | 'staging' | 'portal' | 'boc-admin' | 'leaderboard'>('directory');
+  const [currentView, setCurrentView] = useState<'directory' | 'comparison' | 'staging' | 'portal'>('directory');
   const [hoveredCoopId, setHoveredCoopId] = useState<string | null>(null);
   const [user, setUser] = useState<FirebaseUser | null>(null);
   const [userProfile, setUserProfile] = useState<any>(null);
   const [isProfileLoading, setIsProfileLoading] = useState(true);
   const [portalCoopId, setPortalCoopId] = useState<string | null>(null);
-  const [cooperatives, setCooperatives] = useState<CoffeeCooperative[]>(
-    import.meta.env.DEV ? MOCK_COOPERATIVES : []
-  );
-
-  const [facetFilters, setFacetFilters] = useState<FacetFilters>({
-    searchQuery: '',
-    selectedCerts: [],
-    selectedProcessing: [],
-    altMin: '',
-    altMax: '',
-    minScore: '',
-    bocOnly: false,
-  });
-
-  const processingOptions = useMemo(() =>
-    Array.from(new Set(cooperatives.flatMap(c => c.processingMethods ?? []))).sort(),
-    [cooperatives]
-  );
-
-  const filteredCoops = useMemo(() => {
-    const { searchQuery, selectedCerts, selectedProcessing, altMin, altMax, minScore, bocOnly } = facetFilters;
-    const altMinN = altMin !== '' ? Number(altMin) : null;
-    const altMaxN = altMax !== '' ? Number(altMax) : null;
-    const minScoreN = minScore !== '' ? Number(minScore) : null;
-
-    return cooperatives.filter(c => {
-      if (searchQuery && !c.name.toLowerCase().includes(searchQuery.toLowerCase())) return false;
-      if (selectedCerts.length > 0 && !selectedCerts.every(cert => c.certifications?.includes(cert))) return false;
-      if (selectedProcessing.length > 0 && !selectedProcessing.some(m => c.processingMethods?.includes(m))) return false;
-      if (altMinN !== null && c.altitudeRange && c.altitudeRange[1] < altMinN) return false;
-      if (altMaxN !== null && c.altitudeRange && c.altitudeRange[0] > altMaxN) return false;
-      if (minScoreN !== null && (c.selfReportedCuppingScore ?? 0) < minScoreN) return false;
-      if (bocOnly && !c.isBocParticipant) return false;
-      return true;
-    });
-  }, [cooperatives, facetFilters]);
+  const [cooperatives, setCooperatives] = useState<CoffeeCooperative[]>(MOCK_COOPERATIVES);
 
   useEffect(() => {
     const unsubscribe = onAuthStateChanged(auth, async (u) => {
@@ -2454,10 +1669,8 @@ function AppContent() {
     const path = 'cooperatives';
     const unsubscribe = onSnapshot(collection(db, 'cooperatives'), (snapshot) => {
       const dbCoops = snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() } as CoffeeCooperative));
-      if (import.meta.env.DEV) {
+      if (dbCoops.length > 0) {
         setCooperatives([...MOCK_COOPERATIVES, ...dbCoops]);
-      } else {
-        setCooperatives(dbCoops);
       }
     }, (error) => {
       handleFirestoreError(error, OperationType.LIST, path);
@@ -2479,12 +1692,10 @@ function AppContent() {
     setCurrentView('directory');
   };
 
-  const selectedCoop = useMemo(() =>
+  const selectedCoop = useMemo(() => 
     cooperatives.find(c => c.id === selectedCoopId),
     [selectedCoopId, cooperatives]
   );
-
-  useEffect(() => { setDetailTab('overview'); }, [selectedCoopId]);
 
   const toggleComparison = (id: string) => {
     setComparisonIds(prev => 
@@ -2494,8 +1705,6 @@ function AppContent() {
 
   return (
     <div className="min-h-screen bg-[#faf9f6] text-stone-900 font-sans selection:bg-amber-100">
-      <Toaster position="bottom-right" toastOptions={{ duration: 4000 }} />
-      <HowItWorksModal open={isAboutOpen} onClose={() => setIsAboutOpen(false)} />
       {/* Header */}
       <header className="sticky top-0 z-40 bg-white/80 backdrop-blur-md border-b border-stone-200">
         <div className="max-w-7xl mx-auto px-4 h-16 flex items-center justify-between">
@@ -2504,7 +1713,7 @@ function AppContent() {
               <div className="w-8 h-8 bg-amber-900 rounded-lg flex items-center justify-center text-white">
                 <Coffee size={18} />
               </div>
-              <h1 className="text-xl font-black tracking-tighter text-stone-900">CongoFarmers</h1>
+              <h1 className="text-xl font-black tracking-tighter text-stone-900">COOPPRO</h1>
             </div>
 
             <nav className="hidden md:flex items-center gap-1">
@@ -2517,7 +1726,7 @@ function AppContent() {
               >
                 {t('directory')}
               </button>
-              <button
+              <button 
                 onClick={() => { setCurrentView('comparison'); setPortalCoopId(null); }}
                 className={cn(
                   "px-4 py-2 rounded-full text-sm font-bold transition-all flex items-center gap-2",
@@ -2531,25 +1740,8 @@ function AppContent() {
                   </span>
                 )}
               </button>
-              <button
-                onClick={() => { setCurrentView('leaderboard'); setPortalCoopId(null); }}
-                className={cn(
-                  "px-4 py-2 rounded-full text-sm font-bold transition-all flex items-center gap-2",
-                  currentView === 'leaderboard' ? "bg-stone-100 text-stone-900" : "text-stone-500 hover:text-stone-900"
-                )}
-              >
-                <Award size={14} />
-                Best of Congo
-              </button>
-              <button
-                onClick={() => setIsAboutOpen(true)}
-                className="px-4 py-2 rounded-full text-sm font-bold transition-all text-stone-500 hover:text-stone-900 flex items-center gap-2"
-              >
-                <Info size={14} />
-                {t('about')}
-              </button>
               {userProfile?.role === 'admin' && (
-                <button
+                <button 
                   onClick={() => { setCurrentView('staging'); setPortalCoopId(null); }}
                   className={cn(
                     "px-4 py-2 rounded-full text-sm font-bold transition-all flex items-center gap-2",
@@ -2558,18 +1750,6 @@ function AppContent() {
                 >
                   <Shield size={14} />
                   {t('stagingArea')}
-                </button>
-              )}
-              {userProfile?.role === 'admin' && (
-                <button
-                  onClick={() => { setCurrentView('boc-admin'); setPortalCoopId(null); }}
-                  className={cn(
-                    "px-4 py-2 rounded-full text-sm font-bold transition-all flex items-center gap-2",
-                    currentView === 'boc-admin' ? "bg-stone-100 text-stone-900" : "text-stone-500 hover:text-stone-900"
-                  )}
-                >
-                  <Award size={14} />
-                  BoC Admin
                 </button>
               )}
               {userProfile?.cooperativeId && (
@@ -2645,24 +1825,14 @@ function AppContent() {
               </button>
             </div>
             
-            <ComparisonView
-              selectedIds={comparisonIds}
-              onRemove={(id) => setComparisonIds(prev => prev.filter(i => i !== id))}
+            <ComparisonView 
+              selectedIds={comparisonIds} 
+              onRemove={(id) => setComparisonIds(prev => prev.filter(i => i !== id))} 
               onAdd={(id) => setComparisonIds(prev => [...prev, id].slice(-4))}
-              cooperatives={cooperatives}
             />
           </motion.div>
         ) : currentView === 'staging' ? (
           <StagingArea />
-        ) : currentView === 'leaderboard' ? (
-          <BocLeaderboard
-            onCoopSelect={(coopId) => {
-              setSelectedCoopId(coopId);
-              setCurrentView('directory');
-            }}
-          />
-        ) : currentView === 'boc-admin' ? (
-          <BocEditionAdmin cooperatives={cooperatives} />
         ) : currentView === 'portal' ? (
           isProfileLoading ? (
             <div className="p-12 text-center"><Loader2 className="animate-spin mx-auto text-amber-600" /></div>
@@ -2680,10 +1850,10 @@ function AppContent() {
           <div className="grid grid-cols-1 lg:grid-cols-12 gap-8">
             {/* Sidebar List */}
             <div className="lg:col-span-4 space-y-4">
-              <div className="flex items-center justify-between mb-3">
-                <p className="text-xs font-black text-stone-400 uppercase tracking-widest">{t('cooperatives')}</p>
+              <div className="flex items-center justify-between mb-4">
+                <h2 className="text-sm font-bold text-stone-400 uppercase tracking-widest">{t('cooperatives')}</h2>
                 {userProfile?.role === 'admin' && (
-                  <button
+                  <button 
                     onClick={() => {
                       setPortalCoopId(null);
                       setCurrentView('portal');
@@ -2695,22 +1865,8 @@ function AppContent() {
                   </button>
                 )}
               </div>
-
-              <FacetedFilterPanel
-                filters={facetFilters}
-                onChange={partial => setFacetFilters(prev => ({ ...prev, ...partial }))}
-                processingOptions={processingOptions}
-                totalCount={cooperatives.length}
-                filteredCount={filteredCoops.length}
-              />
-
               <div className="space-y-3">
-                {filteredCoops.length === 0 ? (
-                  <div className="text-center py-8 text-stone-400 text-sm">
-                    No cooperatives match the current filters.
-                  </div>
-                ) : null}
-                {filteredCoops.map((coop) => (
+                {cooperatives.map((coop) => (
                   <motion.div
                     key={coop.id}
                     whileHover={{ x: 4 }}
@@ -2725,19 +1881,18 @@ function AppContent() {
                     onClick={() => setSelectedCoopId(coop.id)}
                   >
                     <div className="flex items-start gap-4">
-                      <img
-                        src={coop.logoUrl}
-                        alt=""
+                      <img 
+                        src={coop.logoUrl} 
+                        alt="" 
                         className="w-12 h-12 rounded-xl object-cover border border-stone-100"
                         referrerPolicy="no-referrer"
-                        onError={onLogoError}
                       />
                       <div className="flex-1">
                         <div className="flex items-center gap-2 mb-1">
                           <span className="text-[10px] font-bold px-2 py-0.5 bg-stone-100 text-stone-600 rounded uppercase">
                             {coop.country}
                           </span>
-                          <span className="text-xs font-bold text-amber-600">{coop.selfReportedCuppingScore} pts</span>
+                          <span className="text-xs font-bold text-amber-600">{coop.averageCuppingScore} pts</span>
                         </div>
                         <h3 className="font-bold text-stone-900 leading-tight group-hover:text-amber-900 transition-colors">
                           {coop.name}
@@ -2790,12 +1945,11 @@ function AppContent() {
                   >
                     {/* Hero */}
                     <div className="relative h-64 rounded-3xl overflow-hidden group">
-                      <img
-                        src={selectedCoop.imageUrl}
+                      <img 
+                        src={selectedCoop.imageUrl} 
                         alt={selectedCoop.name}
                         className="w-full h-full object-cover transition-transform duration-700 group-hover:scale-105"
                         referrerPolicy="no-referrer"
-                        onError={onImageError}
                       />
                       <div className="absolute inset-0 bg-gradient-to-t from-black/80 via-black/20 to-transparent" />
                       <div className="absolute bottom-0 left-0 p-8 flex items-end justify-between w-full">
@@ -2823,11 +1977,11 @@ function AppContent() {
                                   if (window.confirm(t('confirmDelete'))) {
                                     try {
                                       await deleteDoc(doc(db, 'cooperatives', selectedCoop.id));
-                                      toast.success(t('success'));
+                                      alert(t('success'));
                                       setSelectedCoopId(null);
                                     } catch (error) {
                                       console.error("Error deleting coop", error);
-                                      toast.error(t('error'));
+                                      alert(t('error'));
                                     }
                                   }
                                 }}
@@ -2844,7 +1998,7 @@ function AppContent() {
                                     const docRef = doc(db, 'users', user.uid);
                                     await updateDoc(docRef, { cooperativeId: selectedCoop.id });
                                     setUserProfile({ ...userProfile, cooperativeId: selectedCoop.id });
-                                    toast.success(`You are now the manager of ${selectedCoop.name}. The Cooperative Portal is now accessible in the navigation bar.`);
+                                    alert(`Success! You are now the manager of ${selectedCoop.name}. The Cooperative Portal is now accessible in the navigation bar.`);
                                   }}
                                   className="flex items-center gap-2 px-4 py-2 bg-amber-600 text-white rounded-xl text-xs font-bold hover:bg-amber-700 transition-all shadow-lg"
                                 >
@@ -2855,63 +2009,42 @@ function AppContent() {
                             </div>
                           )}
                         </div>
-                        <div className="flex flex-col gap-2 items-end">
-                          <a
-                            href={`mailto:${selectedCoop.managerEmail || ADMIN_EMAIL}?subject=${encodeURIComponent(`Inquiry about ${selectedCoop.name}`)}`}
-                            className="px-4 py-2 bg-amber-500/90 backdrop-blur-md border border-amber-400/30 rounded-xl text-xs font-bold text-white hover:bg-amber-500 transition-all flex items-center gap-2"
-                          >
-                            <Mail size={14} /> Contact
-                          </a>
-                          <button
-                            onClick={() => {
-                              const safeFilename = selectedCoop.name.replace(/[^a-zA-Z0-9_-]/g, '_');
-                              downloadCsv(
-                                [
-                                  [t('metric'), 'Value'],
-                                  ['Name', selectedCoop.name],
-                                  ['Country', selectedCoop.country],
-                                  ['Region', selectedCoop.region],
-                                  [t('established'), selectedCoop.established],
-                                  [t('members'), selectedCoop.members],
-                                  [t('cuppingScore'), selectedCoop.selfReportedCuppingScore],
-                                  [t('production'), selectedCoop.annualProduction],
-                                  [t('description'), selectedCoop.description],
-                                ],
-                                `${safeFilename}_report.csv`
-                              );
-                            }}
-                            className="px-4 py-2 bg-white/10 backdrop-blur-md border border-white/20 rounded-xl text-xs font-bold text-white hover:bg-white/20 transition-all flex items-center gap-2"
-                          >
-                            <Award size={14} /> {t('downloadReport')}
-                          </button>
-                        </div>
+                        <button 
+                          onClick={() => {
+                            const csvContent = [
+                              [t('metric'), 'Value'],
+                              ['Name', selectedCoop.name],
+                              ['Country', selectedCoop.country],
+                              ['Region', selectedCoop.region],
+                              [t('established'), selectedCoop.established],
+                              [t('members'), selectedCoop.members],
+                              [t('cuppingScore'), selectedCoop.averageCuppingScore],
+                              [t('production'), selectedCoop.annualProduction],
+                              [t('description'), selectedCoop.description]
+                            ].map(row => row.join(',')).join('\n');
+                            
+                            const blob = new Blob([csvContent], { type: 'text/csv;charset=utf-8;' });
+                            const link = document.createElement('a');
+                            const url = URL.createObjectURL(blob);
+                            link.setAttribute('href', url);
+                            link.setAttribute('download', `${selectedCoop.name.replace(/\s+/g, '_')}_report.csv`);
+                            link.style.visibility = 'hidden';
+                            document.body.appendChild(link);
+                            link.click();
+                            document.body.removeChild(link);
+                          }}
+                          className="px-4 py-2 bg-white/10 backdrop-blur-md border border-white/20 rounded-xl text-xs font-bold text-white hover:bg-white/20 transition-all flex items-center gap-2"
+                        >
+                          <Award size={14} /> {t('downloadReport')}
+                        </button>
                       </div>
                     </div>
 
-                    {/* Tab bar */}
-                    <div className="flex gap-1 border-b border-stone-200 -mb-2">
-                      {(['overview', 'boc-history'] as const).map(tab => (
-                        <button
-                          key={tab}
-                          onClick={() => setDetailTab(tab)}
-                          className={cn(
-                            "px-4 py-2 text-sm font-bold border-b-2 -mb-px transition-all",
-                            detailTab === tab
-                              ? "border-amber-600 text-amber-700"
-                              : "border-transparent text-stone-400 hover:text-stone-700"
-                          )}
-                        >
-                          {tab === 'overview' ? 'Overview' : 'Best of Congo'}
-                        </button>
-                      ))}
-                    </div>
-
-                    {detailTab === 'overview' && (<>
                     {/* Stats Grid */}
                     <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
                       <StatCard icon={Users} label={t('members')} value={selectedCoop.members.toLocaleString()} />
                       <StatCard icon={TrendingUp} label={t('production')} value={selectedCoop.annualProduction} unit="Tons" />
-                      <StatCard icon={Award} label={t('score')} value={selectedCoop.selfReportedCuppingScore} />
+                      <StatCard icon={Award} label={t('score')} value={selectedCoop.averageCuppingScore} />
                       <StatCard icon={Scale} label="Altitude" value={`${selectedCoop.altitudeRange[0]}-${selectedCoop.altitudeRange[1]}`} unit="m" />
                     </div>
 
@@ -3047,11 +2180,6 @@ function AppContent() {
                         </div>
                       </div>
                     </div>
-                    </>)}
-
-                    {detailTab === 'boc-history' && (
-                      <BocHistoryTab coopId={selectedCoop.id} />
-                    )}
                   </motion.div>
                 ) : (
                   <div className="h-full flex flex-col items-center justify-center text-center p-12 border-2 border-dashed border-stone-200 rounded-3xl bg-white/30">
@@ -3079,7 +2207,7 @@ function AppContent() {
                 <div className="w-8 h-8 bg-amber-900 rounded-lg flex items-center justify-center text-white">
                   <Coffee size={18} />
                 </div>
-                <h1 className="text-xl font-black tracking-tighter text-stone-900">CongoFarmers</h1>
+                <h1 className="text-xl font-black tracking-tighter text-stone-900">COOPPRO</h1>
               </div>
               <p className="text-stone-500 text-sm max-w-sm leading-relaxed">
                 {t('platformDesc')}
@@ -3104,7 +2232,7 @@ function AppContent() {
             </div>
           </div>
           <div className="pt-8 border-t border-stone-100 flex flex-col md:flex-row justify-between items-center gap-4">
-            <p className="text-xs text-stone-400 font-medium">© 2026 CongoFarmers. {t('allRightsReserved')}</p>
+            <p className="text-xs text-stone-400 font-medium">© 2026 COOPPRO. {t('allRightsReserved')}</p>
             <div className="flex items-center gap-6">
               <div className="flex items-center gap-2 text-xs font-bold text-stone-400">
                 <div className="w-2 h-2 bg-green-500 rounded-full" />
