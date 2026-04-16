@@ -1372,7 +1372,7 @@ function AppContent() {
               <div className="w-8 h-8 bg-amber-900 rounded-lg flex items-center justify-center text-white">
                 <Coffee size={18} />
               </div>
-              <h1 className="text-xl font-black tracking-tighter text-stone-900">COOPPRO</h1>
+              <h1 className="text-xl font-black tracking-tighter text-stone-900">CongoFarmers</h1>
             </div>
 
             <nav className="hidden md:flex items-center gap-1">
@@ -1869,7 +1869,7 @@ function AppContent() {
                 <div className="w-8 h-8 bg-amber-900 rounded-lg flex items-center justify-center text-white">
                   <Coffee size={18} />
                 </div>
-                <h1 className="text-xl font-black tracking-tighter text-stone-900">COOPPRO</h1>
+                <h1 className="text-xl font-black tracking-tighter text-stone-900">CongoFarmers</h1>
               </div>
               <p className="text-stone-500 text-sm max-w-sm leading-relaxed">
                 {t('platformDesc')}
@@ -1894,7 +1894,7 @@ function AppContent() {
             </div>
           </div>
           <div className="pt-8 border-t border-stone-100 flex flex-col md:flex-row justify-between items-center gap-4">
-            <p className="text-xs text-stone-400 font-medium">© 2026 COOPPRO. {t('allRightsReserved')}</p>
+            <p className="text-xs text-stone-400 font-medium">© 2026 CongoFarmers. {t('allRightsReserved')}</p>
             <div className="flex items-center gap-6">
               <div className="flex items-center gap-2 text-xs font-bold text-stone-400">
                 <div className="w-2 h-2 bg-green-500 rounded-full" />
