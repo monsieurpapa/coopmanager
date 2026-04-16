@@ -11,17 +11,18 @@ import {
   Plus, Upload, LogIn, LogOut, Shield, User as UserIcon, Loader2, Check, Search, Filter, Download, Edit, Trash2
 } from 'lucide-react';
 import { motion, AnimatePresence } from 'motion/react';
-import { MOCK_COOPERATIVES, CoffeeCooperative } from './types';
+import { MOCK_COOPERATIVES, CoffeeCooperative, EditionParticipant } from './types';
 import { cn } from './lib/utils';
 import { auth, db } from './firebase';
 import { onAuthStateChanged, signInWithPopup, GoogleAuthProvider, signOut, User as FirebaseUser } from 'firebase/auth';
-import { collection, onSnapshot, doc, setDoc, getDoc, updateDoc, addDoc, query, where, serverTimestamp, deleteDoc, getDocs, getDocFromServer } from 'firebase/firestore';
+import { collection, onSnapshot, doc, setDoc, getDoc, updateDoc, addDoc, query, where, serverTimestamp, deleteDoc, getDocs, getDocFromServer, writeBatch, collectionGroup } from 'firebase/firestore';
 import { useDropzone } from 'react-dropzone';
 import { parseCooperativeProfile } from './services/geminiService';
 import { useForm, useFieldArray } from 'react-hook-form';
 import { zodResolver } from '@hookform/resolvers/zod';
 import Markdown from 'react-markdown';
 import toast, { Toaster } from 'react-hot-toast';
+import * as z from 'zod';
 import { handleFirestoreError, OperationType } from './lib/firestore-utils';
 import { CooperativeSchema, type CooperativeFormData } from './schemas';
 import { LanguageContext, useTranslation, LanguageSwitcher, translations, type Language } from './contexts/language';
@@ -1260,12 +1261,329 @@ function UserProfileModal({ isOpen, onClose, profile, user }: { isOpen: boolean,
   );
 }
 
+// --- Best of Congo Admin ---
+
+const BocBuyerSchema = z.object({
+  name: z.string().min(1, 'Buyer name is required'),
+  logoUrl: z.string().url().optional().or(z.literal('')),
+});
+
+const BocParticipantSchema = z.object({
+  coopId: z.string().min(1, 'Select a cooperative'),
+  qtySubmitted: z.number().min(0, 'Must be ≥ 0'),
+  scores: z.object({
+    average: z.number().min(0).max(100),
+  }),
+  qtySold: z.number().min(0, 'Must be ≥ 0'),
+  buyers: z.array(BocBuyerSchema),
+});
+
+const BocEditionSchema = z.object({
+  year: z.number().int().min(2000).max(2100),
+  theme: z.string().optional(),
+  participants: z.array(BocParticipantSchema),
+});
+
+type BocEditionFormData = z.infer<typeof BocEditionSchema>;
+
+function ParticipantBuyersField({ control, register, participantIndex, errors }: {
+  control: any;
+  register: any;
+  participantIndex: number;
+  errors: any;
+}) {
+  const { fields, append, remove } = useFieldArray({
+    control,
+    name: `participants.${participantIndex}.buyers`,
+  });
+
+  return (
+    <div className="mt-3 space-y-2">
+      <p className="text-xs font-bold text-stone-500 uppercase tracking-widest">Buyers</p>
+      {fields.map((buyerField, bi) => (
+        <div key={buyerField.id} className="flex gap-2 items-start">
+          <input
+            {...register(`participants.${participantIndex}.buyers.${bi}.name`)}
+            placeholder="Buyer name"
+            className="flex-1 px-3 py-1.5 text-sm border border-stone-200 rounded-lg focus:outline-none focus:ring-2 focus:ring-amber-500"
+          />
+          <input
+            {...register(`participants.${participantIndex}.buyers.${bi}.logoUrl`)}
+            placeholder="Logo URL (optional)"
+            className="flex-1 px-3 py-1.5 text-sm border border-stone-200 rounded-lg focus:outline-none focus:ring-2 focus:ring-amber-500"
+          />
+          <button
+            type="button"
+            onClick={() => remove(bi)}
+            className="p-1.5 text-stone-400 hover:text-red-500 transition-colors"
+          >
+            <X size={14} />
+          </button>
+        </div>
+      ))}
+      <button
+        type="button"
+        onClick={() => append({ name: '', logoUrl: '' })}
+        className="flex items-center gap-1 text-xs font-bold text-amber-700 hover:text-amber-900 transition-colors"
+      >
+        <Plus size={12} />
+        Add buyer
+      </button>
+    </div>
+  );
+}
+
+function BocEditionAdmin({ cooperatives }: { cooperatives: CoffeeCooperative[] }) {
+  const [loadingYear, setLoadingYear] = useState(false);
+  const [saving, setSaving] = useState(false);
+
+  const { register, handleSubmit, control, reset, watch, setValue, formState: { errors } } = useForm<BocEditionFormData>({
+    resolver: zodResolver(BocEditionSchema),
+    defaultValues: { year: new Date().getFullYear(), theme: '', participants: [] },
+  });
+
+  const { fields: participantFields, append: appendParticipant, remove: removeParticipant } = useFieldArray({
+    control,
+    name: 'participants',
+  });
+
+  const watchedYear = watch('year');
+
+  const loadEdition = async (year: number) => {
+    if (!year || year < 2000 || year > 2100) return;
+    setLoadingYear(true);
+    try {
+      const editionRef = doc(db, 'bestofcongo_editions', String(year));
+      const editionSnap = await getDoc(editionRef);
+      const participantsSnap = await getDocs(collection(db, 'bestofcongo_editions', String(year), 'participants'));
+
+      if (editionSnap.exists()) {
+        const editionData = editionSnap.data();
+        const participants = participantsSnap.docs.map(d => d.data() as EditionParticipant);
+        reset({
+          year,
+          theme: editionData.theme || '',
+          participants: participants.map(p => ({
+            coopId: p.coopId,
+            qtySubmitted: p.qtySubmitted,
+            scores: { average: p.scores.average },
+            qtySold: p.qtySold,
+            buyers: p.buyers || [],
+          })),
+        });
+        toast.success(`Edition ${year} loaded`);
+      } else {
+        reset({ year, theme: '', participants: [] });
+        toast(`No existing edition for ${year} — starting fresh.`);
+      }
+    } catch (error) {
+      handleFirestoreError(error, OperationType.GET, `bestofcongo_editions/${year}`);
+    } finally {
+      setLoadingYear(false);
+    }
+  };
+
+  const onSubmit = async (data: BocEditionFormData) => {
+    setSaving(true);
+    const yearStr = String(data.year);
+    const editionRef = doc(db, 'bestofcongo_editions', yearStr);
+
+    try {
+      // 1. Save edition doc
+      await setDoc(editionRef, { year: data.year, theme: data.theme || '' }, { merge: true });
+
+      // 2. Delete-then-write participants in a single WriteBatch
+      const existingSnap = await getDocs(collection(db, 'bestofcongo_editions', yearStr, 'participants'));
+      const batch = writeBatch(db);
+
+      existingSnap.docs.forEach(d => batch.delete(d.ref));
+      data.participants.forEach(p => {
+        const ref = doc(db, 'bestofcongo_editions', yearStr, 'participants', p.coopId);
+        const coop = cooperatives.find(c => c.id === p.coopId);
+        batch.set(ref, {
+          coopId: p.coopId,
+          coopName: coop?.name || '',
+          qtySubmitted: p.qtySubmitted,
+          scores: { average: p.scores.average },
+          qtySold: p.qtySold,
+          buyers: p.buyers.filter(b => b.name.trim() !== ''),
+        });
+      });
+
+      // Also set isBocParticipant: true on each cooperative doc
+      data.participants.forEach(p => {
+        const coopRef = doc(db, 'cooperatives', p.coopId);
+        batch.update(coopRef, { isBocParticipant: true });
+      });
+
+      await batch.commit();
+      toast.success(`Edition ${data.year} saved (${data.participants.length} participants)`);
+    } catch (error) {
+      console.error('Error saving edition:', error);
+      toast.error('Save failed — check console');
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  return (
+    <div className="max-w-4xl mx-auto p-6 space-y-8">
+      <div className="flex items-center justify-between">
+        <div>
+          <h2 className="text-2xl font-black text-stone-900">Best of Congo — Admin</h2>
+          <p className="text-stone-500 text-sm">Create or edit a competition edition and its participant results.</p>
+        </div>
+        <div className="p-3 bg-amber-100 rounded-2xl text-amber-900">
+          <Award size={24} />
+        </div>
+      </div>
+
+      <form onSubmit={handleSubmit(onSubmit)} className="space-y-8">
+        {/* Edition header */}
+        <div className="bg-white p-6 rounded-3xl border border-stone-200 shadow-sm space-y-4">
+          <h3 className="text-sm font-black text-stone-400 uppercase tracking-widest">Edition</h3>
+          <div className="flex gap-4 items-end">
+            <div className="flex-1">
+              <label className="block text-xs font-bold text-stone-600 mb-1">Year *</label>
+              <input
+                type="number"
+                {...register('year', { valueAsNumber: true })}
+                className="w-full px-3 py-2 border border-stone-200 rounded-xl focus:outline-none focus:ring-2 focus:ring-amber-500"
+              />
+              {errors.year && <p className="text-xs text-red-500 mt-1">{errors.year.message as string}</p>}
+            </div>
+            <div className="flex-1">
+              <label className="block text-xs font-bold text-stone-600 mb-1">Theme (optional)</label>
+              <input
+                {...register('theme')}
+                placeholder="e.g. Terroir & Traceability"
+                className="w-full px-3 py-2 border border-stone-200 rounded-xl focus:outline-none focus:ring-2 focus:ring-amber-500"
+              />
+            </div>
+            <button
+              type="button"
+              onClick={() => loadEdition(watchedYear)}
+              disabled={loadingYear}
+              className="px-4 py-2 bg-stone-100 text-stone-700 rounded-xl text-sm font-bold hover:bg-stone-200 transition-all disabled:opacity-50 flex items-center gap-2"
+            >
+              {loadingYear ? <Loader2 size={14} className="animate-spin" /> : null}
+              Load
+            </button>
+          </div>
+        </div>
+
+        {/* Participants */}
+        <div className="bg-white p-6 rounded-3xl border border-stone-200 shadow-sm space-y-6">
+          <div className="flex items-center justify-between">
+            <h3 className="text-sm font-black text-stone-400 uppercase tracking-widest">
+              Participants ({participantFields.length})
+            </h3>
+            <button
+              type="button"
+              onClick={() => appendParticipant({ coopId: '', qtySubmitted: 0, scores: { average: 0 }, qtySold: 0, buyers: [] })}
+              className="flex items-center gap-2 px-3 py-1.5 bg-amber-600 text-white rounded-lg text-sm font-bold hover:bg-amber-700 transition-all"
+            >
+              <Plus size={14} />
+              Add participant
+            </button>
+          </div>
+
+          {participantFields.length === 0 && (
+            <p className="text-stone-400 text-sm text-center py-8">No participants yet. Click "Add participant" or load an existing edition.</p>
+          )}
+
+          {participantFields.map((field, index) => (
+            <div key={field.id} className="border border-stone-100 rounded-2xl p-4 space-y-3 bg-stone-50">
+              <div className="flex items-center justify-between">
+                <span className="text-xs font-bold text-stone-500">#{index + 1}</span>
+                <button
+                  type="button"
+                  onClick={() => removeParticipant(index)}
+                  className="p-1 text-stone-400 hover:text-red-500 transition-colors"
+                >
+                  <Trash2 size={14} />
+                </button>
+              </div>
+
+              <div className="grid grid-cols-2 gap-3 sm:grid-cols-4">
+                <div className="col-span-2">
+                  <label className="block text-xs font-bold text-stone-600 mb-1">Cooperative *</label>
+                  <select
+                    {...register(`participants.${index}.coopId`)}
+                    className="w-full px-3 py-2 text-sm border border-stone-200 rounded-lg focus:outline-none focus:ring-2 focus:ring-amber-500 bg-white"
+                  >
+                    <option value="">— select —</option>
+                    {cooperatives.map(c => (
+                      <option key={c.id} value={c.id}>{c.name}</option>
+                    ))}
+                  </select>
+                  {errors.participants?.[index]?.coopId && (
+                    <p className="text-xs text-red-500 mt-1">{errors.participants[index]?.coopId?.message as string}</p>
+                  )}
+                </div>
+
+                <div>
+                  <label className="block text-xs font-bold text-stone-600 mb-1">Avg Score *</label>
+                  <input
+                    type="number"
+                    step="0.01"
+                    {...register(`participants.${index}.scores.average`, { valueAsNumber: true })}
+                    className="w-full px-3 py-2 text-sm border border-stone-200 rounded-lg focus:outline-none focus:ring-2 focus:ring-amber-500"
+                  />
+                </div>
+
+                <div>
+                  <label className="block text-xs font-bold text-stone-600 mb-1">Qty Submitted (kg)</label>
+                  <input
+                    type="number"
+                    step="0.01"
+                    {...register(`participants.${index}.qtySubmitted`, { valueAsNumber: true })}
+                    className="w-full px-3 py-2 text-sm border border-stone-200 rounded-lg focus:outline-none focus:ring-2 focus:ring-amber-500"
+                  />
+                </div>
+
+                <div>
+                  <label className="block text-xs font-bold text-stone-600 mb-1">Qty Sold (kg)</label>
+                  <input
+                    type="number"
+                    step="0.01"
+                    {...register(`participants.${index}.qtySold`, { valueAsNumber: true })}
+                    className="w-full px-3 py-2 text-sm border border-stone-200 rounded-lg focus:outline-none focus:ring-2 focus:ring-amber-500"
+                  />
+                </div>
+              </div>
+
+              <ParticipantBuyersField
+                control={control}
+                register={register}
+                participantIndex={index}
+                errors={errors}
+              />
+            </div>
+          ))}
+        </div>
+
+        <div className="flex justify-end">
+          <button
+            type="submit"
+            disabled={saving}
+            className="flex items-center gap-2 px-6 py-3 bg-stone-900 text-white rounded-xl font-bold hover:bg-stone-800 transition-all disabled:opacity-50"
+          >
+            {saving ? <Loader2 size={16} className="animate-spin" /> : <Check size={16} />}
+            {saving ? 'Saving…' : 'Save edition'}
+          </button>
+        </div>
+      </form>
+    </div>
+  );
+}
+
 function AppContent() {
   const { t } = useTranslation();
   const [selectedCoopId, setSelectedCoopId] = useState<string | null>(null);
   const [comparisonIds, setComparisonIds] = useState<string[]>([]);
   const [isProfileModalOpen, setIsProfileModalOpen] = useState(false);
-  const [currentView, setCurrentView] = useState<'directory' | 'comparison' | 'staging' | 'portal'>('directory');
+  const [currentView, setCurrentView] = useState<'directory' | 'comparison' | 'staging' | 'portal' | 'boc-admin'>('directory');
   const [hoveredCoopId, setHoveredCoopId] = useState<string | null>(null);
   const [user, setUser] = useState<FirebaseUser | null>(null);
   const [userProfile, setUserProfile] = useState<any>(null);
@@ -1400,7 +1718,7 @@ function AppContent() {
                 )}
               </button>
               {userProfile?.role === 'admin' && (
-                <button 
+                <button
                   onClick={() => { setCurrentView('staging'); setPortalCoopId(null); }}
                   className={cn(
                     "px-4 py-2 rounded-full text-sm font-bold transition-all flex items-center gap-2",
@@ -1409,6 +1727,18 @@ function AppContent() {
                 >
                   <Shield size={14} />
                   {t('stagingArea')}
+                </button>
+              )}
+              {userProfile?.role === 'admin' && (
+                <button
+                  onClick={() => { setCurrentView('boc-admin'); setPortalCoopId(null); }}
+                  className={cn(
+                    "px-4 py-2 rounded-full text-sm font-bold transition-all flex items-center gap-2",
+                    currentView === 'boc-admin' ? "bg-stone-100 text-stone-900" : "text-stone-500 hover:text-stone-900"
+                  )}
+                >
+                  <Award size={14} />
+                  BoC Admin
                 </button>
               )}
               {userProfile?.cooperativeId && (
@@ -1493,6 +1823,8 @@ function AppContent() {
           </motion.div>
         ) : currentView === 'staging' ? (
           <StagingArea />
+        ) : currentView === 'boc-admin' ? (
+          <BocEditionAdmin cooperatives={cooperatives} />
         ) : currentView === 'portal' ? (
           isProfileLoading ? (
             <div className="p-12 text-center"><Loader2 className="animate-spin mx-auto text-amber-600" /></div>
