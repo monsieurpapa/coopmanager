@@ -110,7 +110,7 @@ const HoverSummary = ({ coop, onCompare, isComparing }: { coop: CoffeeCooperativ
         </div>
         <div className="bg-stone-50 p-2 rounded-lg">
           <p className="text-[8px] text-stone-400 uppercase font-black">{t('score')}</p>
-          <p className="text-xs font-bold text-amber-600">{coop.averageCuppingScore}</p>
+          <p className="text-xs font-bold text-amber-600">{coop.selfReportedCuppingScore}</p>
         </div>
       </div>
       <p className="text-[10px] text-stone-600 line-clamp-2 italic mb-3">"{coop.description}"</p>
@@ -160,7 +160,7 @@ const SensoryRadar = ({ profile, name }: { profile: any, name: string }) => {
 
 const ComparisonView = ({ selectedIds, onRemove, onAdd, cooperatives }: { selectedIds: string[], onRemove: (id: string) => void, onAdd: (id: string) => void, cooperatives: CoffeeCooperative[] }) => {
   const { t } = useTranslation();
-  const [selectedMetrics, setSelectedMetrics] = useState<string[]>(['averageCuppingScore', 'annualProduction']);
+  const [selectedMetrics, setSelectedMetrics] = useState<string[]>(['selfReportedCuppingScore', 'annualProduction']);
   const [isCoopDropdownOpen, setIsCoopDropdownOpen] = useState(false);
   const [isMetricDropdownOpen, setIsMetricDropdownOpen] = useState(false);
   const [coopSearch, setCoopSearch] = useState('');
@@ -187,7 +187,7 @@ const ComparisonView = ({ selectedIds, onRemove, onAdd, cooperatives }: { select
   );
 
   const availableMetrics = [
-    { id: 'averageCuppingScore', label: t('cuppingScore'), unit: 'pts', color: '#d97706' },
+    { id: 'selfReportedCuppingScore', label: t('cuppingScore'), unit: 'pts', color: '#d97706' },
     { id: 'annualProduction', label: t('production'), unit: 'Tons', color: '#059669' },
     { id: 'members', label: t('members'), unit: '', color: '#2563eb' },
     { id: 'womenMembers', label: t('womenMembers'), unit: '', color: '#db2777' },
@@ -808,7 +808,7 @@ function StagingArea() {
               </div>
               <div>
                 <p className="text-[10px] font-bold text-stone-400 uppercase tracking-widest mb-1">Cupping Score</p>
-                <p className="font-bold text-amber-600">{parsedData.averageCuppingScore}</p>
+                <p className="font-bold text-amber-600">{parsedData.selfReportedCuppingScore}</p>
               </div>
             </div>
             <div>
@@ -1553,7 +1553,7 @@ function AppContent() {
                           <span className="text-[10px] font-bold px-2 py-0.5 bg-stone-100 text-stone-600 rounded uppercase">
                             {coop.country}
                           </span>
-                          <span className="text-xs font-bold text-amber-600">{coop.averageCuppingScore} pts</span>
+                          <span className="text-xs font-bold text-amber-600">{coop.selfReportedCuppingScore} pts</span>
                         </div>
                         <h3 className="font-bold text-stone-900 leading-tight group-hover:text-amber-900 transition-colors">
                           {coop.name}
@@ -1680,7 +1680,7 @@ function AppContent() {
                               ['Region', selectedCoop.region],
                               [t('established'), selectedCoop.established],
                               [t('members'), selectedCoop.members],
-                              [t('cuppingScore'), selectedCoop.averageCuppingScore],
+                              [t('cuppingScore'), selectedCoop.selfReportedCuppingScore],
                               [t('production'), selectedCoop.annualProduction],
                               [t('description'), selectedCoop.description]
                             ].map(row => row.join(',')).join('\n');
@@ -1706,7 +1706,7 @@ function AppContent() {
                     <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
                       <StatCard icon={Users} label={t('members')} value={selectedCoop.members.toLocaleString()} />
                       <StatCard icon={TrendingUp} label={t('production')} value={selectedCoop.annualProduction} unit="Tons" />
-                      <StatCard icon={Award} label={t('score')} value={selectedCoop.averageCuppingScore} />
+                      <StatCard icon={Award} label={t('score')} value={selectedCoop.selfReportedCuppingScore} />
                       <StatCard icon={Scale} label="Altitude" value={`${selectedCoop.altitudeRange[0]}-${selectedCoop.altitudeRange[1]}`} unit="m" />
                     </div>
 

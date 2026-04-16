@@ -27,7 +27,10 @@ export interface CoffeeCooperative {
   processingMethods: string[];
   certifications: string[];
   annualProduction: number; // in tons
-  averageCuppingScore: number;
+  selfReportedCuppingScore: number;
+  commodity?: 'coffee' | 'cocoa';
+  managerEmail?: string;
+  isBocParticipant?: boolean;
   sensoryProfile: SensoryProfile;
   description: string;
   sustainabilityFocus: string[];
@@ -52,7 +55,7 @@ export const MOCK_COOPERATIVES: CoffeeCooperative[] = [
     processingMethods: ["Fully Washed"],
     certifications: ["Organic (In Conversion)"],
     annualProduction: 57.6,
-    averageCuppingScore: 85.0,
+    selfReportedCuppingScore: 85.0,
     areaHa: 374,
     treeCount: 9486902,
     households: 192,
@@ -88,7 +91,7 @@ export const MOCK_COOPERATIVES: CoffeeCooperative[] = [
     processingMethods: ["Fully Washed"],
     certifications: ["Sustainable", "Traceable"],
     annualProduction: 75,
-    averageCuppingScore: 83.0,
+    selfReportedCuppingScore: 83.0,
     areaHa: 450,
     treeCount: 900000,
     households: 300,
@@ -122,7 +125,7 @@ export const MOCK_COOPERATIVES: CoffeeCooperative[] = [
     processingMethods: ["Fully Washed"],
     certifications: ["Bio (In Prep)", "Rainforest Alliance (In Prep)"],
     annualProduction: 124.8,
-    averageCuppingScore: 85.5,
+    selfReportedCuppingScore: 85.5,
     areaHa: 184,
     treeCount: 457031,
     productionHistory: [
@@ -155,7 +158,7 @@ export const MOCK_COOPERATIVES: CoffeeCooperative[] = [
     processingMethods: ["Washed", "Natural"],
     certifications: ["Organic (In Conversion)", "Fairtrade"],
     annualProduction: 48.7,
-    averageCuppingScore: 85.5,
+    selfReportedCuppingScore: 85.5,
     areaHa: 232.6,
     treeCount: 152280,
     sensoryProfile: {
@@ -182,7 +185,7 @@ export const MOCK_COOPERATIVES: CoffeeCooperative[] = [
     processingMethods: ["Washed", "Natural"],
     certifications: ["Fairtrade", "Organic"],
     annualProduction: 12000,
-    averageCuppingScore: 88.5,
+    selfReportedCuppingScore: 88.5,
     sensoryProfile: {
       aroma: 9,
       acidity: 9,
@@ -207,7 +210,7 @@ export const MOCK_COOPERATIVES: CoffeeCooperative[] = [
     processingMethods: ["Washed"],
     certifications: ["Fairtrade", "Organic"],
     annualProduction: 1500,
-    averageCuppingScore: 87.5,
+    selfReportedCuppingScore: 87.5,
     sensoryProfile: {
       aroma: 8,
       acidity: 8,
