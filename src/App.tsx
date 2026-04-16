@@ -15,7 +15,8 @@ import { MOCK_COOPERATIVES, CoffeeCooperative } from './types';
 import { cn } from './lib/utils';
 import { auth, db } from './firebase';
 import { onAuthStateChanged, signInWithPopup, GoogleAuthProvider, signOut, User as FirebaseUser } from 'firebase/auth';
-import { collection, onSnapshot, doc, setDoc, getDoc, updateDoc, addDoc, query, where, serverTimestamp, deleteDoc, getDocs, getDocFromServer } from 'firebase/firestore';
+import { collection, onSnapshot, doc, setDoc, getDoc, updateDoc, addDoc, query, where, serverTimestamp, deleteDoc, getDocs, getDocFromServer, writeBatch, collectionGroup } from 'firebase/firestore';
+import toast, { Toaster } from 'react-hot-toast';
 import { useDropzone } from 'react-dropzone';
 import { parseCooperativeProfile } from './services/geminiService';
 import { useForm, useFieldArray } from 'react-hook-form';
@@ -74,6 +75,50 @@ function handleFirestoreError(error: unknown, operationType: OperationType, path
   console.error('Firestore Error: ', JSON.stringify(errInfo));
   throw new Error(JSON.stringify(errInfo));
 }
+
+// --- BoC Types ---
+interface BocScore { average: number; }
+interface BocBuyer { name: string; logoUrl: string; }
+interface EditionParticipant {
+  coopId: string;
+  coopName?: string;
+  qtySubmitted: number;
+  scores: BocScore;
+  qtySold: number;
+  buyers: BocBuyer[];
+}
+interface BestOfCongoEdition { year: number; theme?: string; }
+
+// --- CSV helpers ---
+function escapeCsvCell(value: unknown): string {
+  const str = String(value ?? '');
+  if (str.includes('"') || str.includes(',') || str.includes('\n')) {
+    return `"${str.replace(/"/g, '""')}"`;
+  }
+  return str;
+}
+function downloadCsv(rows: unknown[][], filename: string) {
+  const content = rows.map(row => row.map(escapeCsvCell).join(',')).join('\n');
+  const blob = new Blob([content], { type: 'text/csv;charset=utf-8;' });
+  const url = URL.createObjectURL(blob);
+  const link = document.createElement('a');
+  link.setAttribute('href', url);
+  link.setAttribute('download', filename);
+  link.style.visibility = 'hidden';
+  document.body.appendChild(link);
+  link.click();
+  document.body.removeChild(link);
+  URL.revokeObjectURL(url);
+}
+
+// --- Image helpers ---
+const LOGO_FALLBACK = 'https://placehold.co/200x200/e7e5e4/78716c?text=Logo';
+const onLogoError = (e: React.SyntheticEvent<HTMLImageElement>) => {
+  (e.target as HTMLImageElement).src = LOGO_FALLBACK;
+};
+
+// --- Constants ---
+const CANONICAL_CERTIFICATIONS = ['Fairtrade', 'Bio-NOP', 'Bio-UE', 'Bio-BRA', 'RainForest Alliance', 'UTZ'];
 
 class ErrorBoundary extends React.Component<{ children: React.ReactNode }, { hasError: boolean, error: Error | null }> {
   constructor(props: { children: React.ReactNode }) {
@@ -272,7 +317,18 @@ const translations = {
     confirmDelete: 'Are you sure you want to delete this cooperative? This action cannot be undone.',
     editCooperative: 'Edit Cooperative',
     addCooperative: 'Add Cooperative',
-    newCooperative: 'New Cooperative'
+    newCooperative: 'New Cooperative',
+    close: 'Close',
+    howItWorksTitle: 'How It Works',
+    howItWorksSubtitle: 'Upload your cooperative documents and let AI do the work.',
+    step1Title: 'Upload Document',
+    step1Desc: 'Drop a PDF or image of your cooperative profile.',
+    step2Title: 'AI Parsing',
+    step2Desc: 'Gemini AI extracts structured data from your document.',
+    step3Title: 'Admin Review',
+    step3Desc: 'An admin verifies the parsed data before it goes live.',
+    step4Title: 'Published',
+    step4Desc: 'Your cooperative appears in the public directory.'
   },
   fr: {
     directory: 'Répertoire',
@@ -386,7 +442,18 @@ const translations = {
     confirmDelete: 'Êtes-vous sûr de vouloir supprimer cette coopérative ? Cette action est irréversible.',
     editCooperative: 'Modifier la Coopérative',
     addCooperative: 'Ajouter une Coopérative',
-    newCooperative: 'Nouvelle Coopérative'
+    newCooperative: 'Nouvelle Coopérative',
+    close: 'Fermer',
+    howItWorksTitle: 'Comment ça marche',
+    howItWorksSubtitle: 'Téléversez vos documents et laissez l\'IA faire le travail.',
+    step1Title: 'Téléverser un document',
+    step1Desc: 'Déposez un PDF ou une image de votre profil coopératif.',
+    step2Title: 'Analyse IA',
+    step2Desc: 'Gemini AI extrait les données structurées de votre document.',
+    step3Title: 'Vérification admin',
+    step3Desc: 'Un administrateur vérifie les données avant publication.',
+    step4Title: 'Publié',
+    step4Desc: 'Votre coopérative apparaît dans l\'annuaire public.'
   }
 };
 
@@ -1603,6 +1670,1226 @@ function UserProfileModal({ isOpen, onClose, profile, user }: { isOpen: boolean,
         </div>
       </motion.div>
     </div>
+  );
+}
+
+// --- Best of Congo CSV Import ---
+
+interface BocCsvRow {
+  coopId: string;
+  coopName: string;
+  average: number;
+  qtySubmitted: number;
+  qtySold: number;
+  buyers: string[];
+  status: 'ok' | 'unknown_coop' | 'invalid_data';
+  errors: string[];
+}
+
+function parseCSVLine(line: string): string[] {
+  const cells: string[] = [];
+  let inQuote = false;
+  let current = '';
+  for (let i = 0; i < line.length; i++) {
+    const ch = line[i];
+    if (ch === '"') {
+      if (inQuote && line[i + 1] === '"') { current += '"'; i++; }
+      else { inQuote = !inQuote; }
+    } else if (ch === ',' && !inQuote) {
+      cells.push(current); current = '';
+    } else {
+      current += ch;
+    }
+  }
+  cells.push(current);
+  return cells;
+}
+
+function parseBocCsv(text: string, cooperatives: CoffeeCooperative[]): BocCsvRow[] {
+  // Note: splits on bare newlines before per-cell parsing; multi-line quoted
+  // cells are not supported. Sufficient for standard spreadsheet exports.
+  const lines = text.split(/\r?\n/).filter(l => l.trim() !== '');
+  if (lines.length < 2) return [];
+
+  const header = lines[0].split(',').map(h => h.trim().toLowerCase().replace(/[^a-z]/g, ''));
+  const col = (name: string) => header.indexOf(name);
+
+  return lines.slice(1).map(line => {
+    const cells = parseCSVLine(line);
+    const rawCoopId = (cells[col('coopid')] ?? cells[col('coopname')] ?? '').trim();
+    const rawAverage = cells[col('average')] ?? '';
+    const rawQtySubmitted = cells[col('qtysubmitted')] ?? '';
+    const rawQtySold = cells[col('qtysold')] ?? '';
+    const rawBuyers = cells[col('buyers')] ?? '';
+
+    const errors: string[] = [];
+    const coop =
+      cooperatives.find(c => c.id === rawCoopId) ||
+      cooperatives.find(c => c.name.toLowerCase() === rawCoopId.toLowerCase());
+    if (!coop) errors.push(`Unknown cooperative: "${rawCoopId}"`);
+
+    const average = parseFloat(rawAverage);
+    const qtySubmitted = parseFloat(rawQtySubmitted);
+    const qtySold = parseFloat(rawQtySold);
+
+    if (isNaN(average) || average < 0 || average > 100) errors.push(`Invalid score: "${rawAverage}"`);
+    if (isNaN(qtySubmitted) || qtySubmitted < 0) errors.push(`Invalid qtySubmitted: "${rawQtySubmitted}"`);
+    if (isNaN(qtySold) || qtySold < 0) errors.push(`Invalid qtySold: "${rawQtySold}"`);
+
+    const buyers = rawBuyers ? rawBuyers.split('|').map(b => b.trim()).filter(Boolean) : [];
+
+    return {
+      coopId: coop?.id ?? rawCoopId,
+      coopName: coop?.name ?? rawCoopId,
+      average: isNaN(average) ? 0 : average,
+      qtySubmitted: isNaN(qtySubmitted) ? 0 : qtySubmitted,
+      qtySold: isNaN(qtySold) ? 0 : qtySold,
+      buyers,
+      status: (errors.length > 0 ? (coop ? 'invalid_data' : 'unknown_coop') : 'ok') as BocCsvRow['status'],
+      errors,
+    };
+  });
+}
+
+function BocCsvImportModal({
+  cooperatives,
+  onImport,
+  onClose,
+}: {
+  cooperatives: CoffeeCooperative[];
+  onImport: (rows: BocCsvRow[]) => void;
+  onClose: () => void;
+}) {
+  const [rows, setRows] = useState<BocCsvRow[]>([]);
+  const [fileName, setFileName] = useState('');
+
+  const { getRootProps, getInputProps, isDragActive } = useDropzone({
+    accept: { 'text/csv': ['.csv'], 'text/plain': ['.txt', '.csv'] },
+    maxSize: 5 * 1024 * 1024, // 5 MB — CSV imports shouldn't exceed this
+    multiple: false,
+    onDrop: (accepted) => {
+      const file = accepted[0];
+      if (!file) return;
+      setFileName(file.name);
+      const reader = new FileReader();
+      reader.onload = (e) => setRows(parseBocCsv(e.target?.result as string, cooperatives));
+      reader.readAsText(file);
+    },
+  });
+
+  const validRows = rows.filter(r => r.status === 'ok');
+  const invalidCount = rows.length - validRows.length;
+
+  const downloadTemplate = () => {
+    const header = ['coopId', 'average', 'qtySubmitted', 'qtySold', 'buyers'];
+    const examples = cooperatives.slice(0, 3).map(c => [
+      c.id, '86.50', '1200', '800', 'Buyer A|Buyer B',
+    ]);
+    downloadCsv([header, ...examples], 'boc_import_template.csv');
+  };
+
+  return (
+    <div className="fixed inset-0 z-50 bg-black/50 flex items-center justify-center p-4">
+      <motion.div
+        initial={{ opacity: 0, scale: 0.95 }}
+        animate={{ opacity: 1, scale: 1 }}
+        className="bg-white rounded-3xl shadow-2xl max-w-3xl w-full max-h-[90vh] flex flex-col"
+      >
+        {/* Header */}
+        <div className="p-6 border-b border-stone-100 flex items-start justify-between shrink-0">
+          <div>
+            <h3 className="text-lg font-black text-stone-900">Import Participants from CSV</h3>
+            <p className="text-sm text-stone-500 mt-0.5">
+              Required columns:{' '}
+              <code className="bg-stone-100 px-1 rounded text-xs font-mono">
+                coopId, average, qtySubmitted, qtySold, buyers
+              </code>
+              {' '}— buyers are pipe-separated names.
+            </p>
+          </div>
+          <button onClick={onClose} className="p-2 text-stone-400 hover:text-stone-700 transition-colors ml-4 shrink-0">
+            <X size={20} />
+          </button>
+        </div>
+
+        {/* Body */}
+        <div className="p-6 space-y-5 overflow-y-auto">
+          <button
+            onClick={downloadTemplate}
+            className="flex items-center gap-2 text-sm font-bold text-amber-700 hover:text-amber-900 transition-colors"
+          >
+            <Download size={14} />
+            Download template CSV
+          </button>
+
+          <div
+            {...getRootProps()}
+            className={cn(
+              'border-2 border-dashed rounded-2xl p-8 text-center cursor-pointer transition-all',
+              isDragActive ? 'border-amber-400 bg-amber-50' : 'border-stone-200 hover:border-stone-300 bg-stone-50'
+            )}
+          >
+            <input {...getInputProps()} />
+            <Upload size={24} className="mx-auto mb-3 text-stone-400" />
+            {fileName ? (
+              <p className="font-bold text-stone-700">{fileName}</p>
+            ) : (
+              <>
+                <p className="font-bold text-stone-700">Drop your CSV here, or click to browse</p>
+                <p className="text-xs text-stone-400 mt-1">.csv files accepted</p>
+              </>
+            )}
+          </div>
+
+          {rows.length > 0 && (
+            <div className="space-y-3">
+              <div className="flex items-center gap-2">
+                <p className="text-xs font-black text-stone-500 uppercase tracking-widest">
+                  Preview — {rows.length} row{rows.length !== 1 ? 's' : ''}
+                </p>
+                {validRows.length > 0 && (
+                  <span className="text-xs font-bold px-2 py-0.5 bg-green-100 text-green-700 rounded-full">
+                    {validRows.length} valid
+                  </span>
+                )}
+                {invalidCount > 0 && (
+                  <span className="text-xs font-bold px-2 py-0.5 bg-red-100 text-red-700 rounded-full">
+                    {invalidCount} error{invalidCount !== 1 ? 's' : ''}
+                  </span>
+                )}
+              </div>
+
+              <div className="overflow-x-auto rounded-2xl border border-stone-100">
+                <table className="w-full text-xs">
+                  <thead className="bg-stone-50 border-b border-stone-100">
+                    <tr>
+                      <th className="px-3 py-2 text-left font-black text-stone-400 uppercase tracking-widest">Cooperative</th>
+                      <th className="px-3 py-2 text-right font-black text-stone-400 uppercase tracking-widest">Score</th>
+                      <th className="px-3 py-2 text-right font-black text-stone-400 uppercase tracking-widest">Submitted kg</th>
+                      <th className="px-3 py-2 text-right font-black text-stone-400 uppercase tracking-widest">Sold kg</th>
+                      <th className="px-3 py-2 text-left font-black text-stone-400 uppercase tracking-widest">Buyers</th>
+                      <th className="px-3 py-2 text-left font-black text-stone-400 uppercase tracking-widest">Status</th>
+                    </tr>
+                  </thead>
+                  <tbody className="divide-y divide-stone-50">
+                    {rows.map((row, i) => (
+                      <tr key={i} className={row.status === 'ok' ? 'bg-white' : 'bg-red-50'}>
+                        <td className="px-3 py-2 font-medium text-stone-800 max-w-[160px] truncate">{row.coopName}</td>
+                        <td className="px-3 py-2 text-right font-bold text-amber-700">{row.average}</td>
+                        <td className="px-3 py-2 text-right text-stone-600">{row.qtySubmitted}</td>
+                        <td className="px-3 py-2 text-right text-stone-600">{row.qtySold}</td>
+                        <td className="px-3 py-2 text-stone-600 max-w-[140px] truncate">
+                          {row.buyers.length ? row.buyers.join(', ') : '—'}
+                        </td>
+                        <td className="px-3 py-2">
+                          {row.status === 'ok' ? (
+                            <span className="flex items-center gap-1 text-green-600 font-bold"><Check size={11} /> OK</span>
+                          ) : (
+                            <span className="text-red-600 font-medium" title={row.errors.join(' · ')}>
+                              {row.errors[0]}
+                            </span>
+                          )}
+                        </td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+
+              {invalidCount > 0 && (
+                <p className="text-xs text-red-500">
+                  Rows with errors will be skipped. Fix the CSV and re-upload to include them.
+                </p>
+              )}
+            </div>
+          )}
+        </div>
+
+        {/* Footer */}
+        <div className="p-6 border-t border-stone-100 flex items-center justify-between shrink-0">
+          <button
+            onClick={onClose}
+            className="px-4 py-2 text-stone-600 text-sm font-bold hover:text-stone-900 transition-colors"
+          >
+            Cancel
+          </button>
+          <button
+            onClick={() => { onImport(validRows); onClose(); }}
+            disabled={validRows.length === 0}
+            className="flex items-center gap-2 px-5 py-2.5 bg-amber-600 text-white rounded-xl text-sm font-bold hover:bg-amber-700 transition-all disabled:opacity-40 disabled:cursor-not-allowed"
+          >
+            <Upload size={14} />
+            Import {validRows.length} row{validRows.length !== 1 ? 's' : ''}
+          </button>
+        </div>
+      </motion.div>
+    </div>
+  );
+}
+
+// --- Best of Congo Admin ---
+
+const BocBuyerSchema = z.object({
+  name: z.string().min(1, 'Buyer name is required'),
+  logoUrl: z.string().url().optional().or(z.literal('')),
+});
+
+const BocParticipantSchema = z.object({
+  coopId: z.string().min(1, 'Select a cooperative'),
+  qtySubmitted: z.number().min(0, 'Must be ≥ 0'),
+  scores: z.object({
+    average: z.number().min(0).max(100),
+  }),
+  qtySold: z.number().min(0, 'Must be ≥ 0'),
+  buyers: z.array(BocBuyerSchema),
+});
+
+const BocEditionSchema = z.object({
+  year: z.number().int().min(2000).max(2100),
+  theme: z.string().optional(),
+  participants: z.array(BocParticipantSchema),
+});
+
+type BocEditionFormData = z.infer<typeof BocEditionSchema>;
+
+function ParticipantBuyersField({ control, register, participantIndex, errors }: {
+  control: any;
+  register: any;
+  participantIndex: number;
+  errors: any;
+}) {
+  const { fields, append, remove } = useFieldArray({
+    control,
+    name: `participants.${participantIndex}.buyers`,
+  });
+
+  return (
+    <div className="mt-3 space-y-2">
+      <p className="text-xs font-bold text-stone-500 uppercase tracking-widest">Buyers</p>
+      {fields.map((buyerField, bi) => (
+        <div key={buyerField.id} className="flex gap-2 items-start">
+          <input
+            {...register(`participants.${participantIndex}.buyers.${bi}.name`)}
+            placeholder="Buyer name"
+            className="flex-1 px-3 py-1.5 text-sm border border-stone-200 rounded-lg focus:outline-none focus:ring-2 focus:ring-amber-500"
+          />
+          <input
+            {...register(`participants.${participantIndex}.buyers.${bi}.logoUrl`)}
+            placeholder="Logo URL (optional)"
+            className="flex-1 px-3 py-1.5 text-sm border border-stone-200 rounded-lg focus:outline-none focus:ring-2 focus:ring-amber-500"
+          />
+          <button
+            type="button"
+            onClick={() => remove(bi)}
+            className="p-1.5 text-stone-400 hover:text-red-500 transition-colors"
+          >
+            <X size={14} />
+          </button>
+        </div>
+      ))}
+      <button
+        type="button"
+        onClick={() => append({ name: '', logoUrl: '' })}
+        className="flex items-center gap-1 text-xs font-bold text-amber-700 hover:text-amber-900 transition-colors"
+      >
+        <Plus size={12} />
+        Add buyer
+      </button>
+    </div>
+  );
+}
+
+function BocEditionAdmin({ cooperatives }: { cooperatives: CoffeeCooperative[] }) {
+  const [loadingYear, setLoadingYear] = useState(false);
+  const [saving, setSaving] = useState(false);
+  const [showCsvImport, setShowCsvImport] = useState(false);
+
+  const { register, handleSubmit, control, reset, watch, setValue, formState: { errors } } = useForm<BocEditionFormData>({
+    resolver: zodResolver(BocEditionSchema),
+    defaultValues: { year: new Date().getFullYear(), theme: '', participants: [] },
+  });
+
+  const { fields: participantFields, append: appendParticipant, remove: removeParticipant } = useFieldArray({
+    control,
+    name: 'participants',
+  });
+
+  const watchedYear = watch('year');
+
+  const loadEdition = async (year: number) => {
+    if (!year || year < 2000 || year > 2100) return;
+    setLoadingYear(true);
+    try {
+      const editionRef = doc(db, 'bestofcongo_editions', String(year));
+      const editionSnap = await getDoc(editionRef);
+      const participantsSnap = await getDocs(collection(db, 'bestofcongo_editions', String(year), 'participants'));
+
+      if (editionSnap.exists()) {
+        const editionData = editionSnap.data();
+        const participants = participantsSnap.docs.map(d => d.data() as EditionParticipant);
+        reset({
+          year,
+          theme: editionData.theme || '',
+          participants: participants.map(p => ({
+            coopId: p.coopId,
+            qtySubmitted: p.qtySubmitted,
+            scores: { average: p.scores.average },
+            qtySold: p.qtySold,
+            buyers: p.buyers || [],
+          })),
+        });
+        toast.success(`Edition ${year} loaded`);
+      } else {
+        reset({ year, theme: '', participants: [] });
+        toast(`No existing edition for ${year} — starting fresh.`);
+      }
+    } catch (error) {
+      handleFirestoreError(error, OperationType.GET, `bestofcongo_editions/${year}`);
+    } finally {
+      setLoadingYear(false);
+    }
+  };
+
+  const onSubmit = async (data: BocEditionFormData) => {
+    setSaving(true);
+    const yearStr = String(data.year);
+    const editionRef = doc(db, 'bestofcongo_editions', yearStr);
+
+    try {
+      // 1. Save edition doc
+      await setDoc(editionRef, { year: data.year, theme: data.theme || '' }, { merge: true });
+
+      // 2. Delete-then-write participants in a single WriteBatch
+      const existingSnap = await getDocs(collection(db, 'bestofcongo_editions', yearStr, 'participants'));
+      const batch = writeBatch(db);
+
+      existingSnap.docs.forEach(d => batch.delete(d.ref));
+      data.participants.forEach(p => {
+        const ref = doc(db, 'bestofcongo_editions', yearStr, 'participants', p.coopId);
+        const coop = cooperatives.find(c => c.id === p.coopId);
+        batch.set(ref, {
+          coopId: p.coopId,
+          coopName: coop?.name || '',
+          qtySubmitted: p.qtySubmitted,
+          scores: { average: p.scores.average },
+          qtySold: p.qtySold,
+          buyers: p.buyers.filter(b => b.name.trim() !== ''),
+        });
+      });
+
+      // Also set isBocParticipant: true on each cooperative doc
+      data.participants.forEach(p => {
+        const coopRef = doc(db, 'cooperatives', p.coopId);
+        batch.update(coopRef, { isBocParticipant: true });
+      });
+
+      await batch.commit();
+      toast.success(`Edition ${data.year} saved (${data.participants.length} participants)`);
+    } catch (error) {
+      console.error('Error saving edition:', error);
+      toast.error('Save failed — check console');
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  const handleCsvImport = (rows: BocCsvRow[]) => {
+    setValue('participants', rows.map(r => ({
+      coopId: r.coopId,
+      qtySubmitted: r.qtySubmitted,
+      scores: { average: r.average },
+      qtySold: r.qtySold,
+      buyers: r.buyers.map(name => ({ name, logoUrl: '' })),
+    })));
+    toast.success(`Imported ${rows.length} participant${rows.length !== 1 ? 's' : ''} from CSV`);
+  };
+
+  return (
+    <div className="max-w-4xl mx-auto p-6 space-y-8">
+      <div className="flex items-center justify-between">
+        <div>
+          <h2 className="text-2xl font-black text-stone-900">Best of Congo — Admin</h2>
+          <p className="text-stone-500 text-sm">Create or edit a competition edition and its participant results.</p>
+        </div>
+        <div className="p-3 bg-amber-100 rounded-2xl text-amber-900">
+          <Award size={24} />
+        </div>
+      </div>
+
+      <form onSubmit={handleSubmit(onSubmit)} className="space-y-8">
+        {/* Edition header */}
+        <div className="bg-white p-6 rounded-3xl border border-stone-200 shadow-sm space-y-4">
+          <h3 className="text-sm font-black text-stone-400 uppercase tracking-widest">Edition</h3>
+          <div className="flex gap-4 items-end">
+            <div className="flex-1">
+              <label className="block text-xs font-bold text-stone-600 mb-1">Year *</label>
+              <input
+                type="number"
+                {...register('year', { valueAsNumber: true })}
+                className="w-full px-3 py-2 border border-stone-200 rounded-xl focus:outline-none focus:ring-2 focus:ring-amber-500"
+              />
+              {errors.year && <p className="text-xs text-red-500 mt-1">{errors.year.message as string}</p>}
+            </div>
+            <div className="flex-1">
+              <label className="block text-xs font-bold text-stone-600 mb-1">Theme (optional)</label>
+              <input
+                {...register('theme')}
+                placeholder="e.g. Terroir & Traceability"
+                className="w-full px-3 py-2 border border-stone-200 rounded-xl focus:outline-none focus:ring-2 focus:ring-amber-500"
+              />
+            </div>
+            <button
+              type="button"
+              onClick={() => loadEdition(watchedYear)}
+              disabled={loadingYear}
+              className="px-4 py-2 bg-stone-100 text-stone-700 rounded-xl text-sm font-bold hover:bg-stone-200 transition-all disabled:opacity-50 flex items-center gap-2"
+            >
+              {loadingYear ? <Loader2 size={14} className="animate-spin" /> : null}
+              Load
+            </button>
+          </div>
+        </div>
+
+        {/* Participants */}
+        <div className="bg-white p-6 rounded-3xl border border-stone-200 shadow-sm space-y-6">
+          <div className="flex items-center justify-between">
+            <h3 className="text-sm font-black text-stone-400 uppercase tracking-widest">
+              Participants ({participantFields.length})
+            </h3>
+            <div className="flex items-center gap-2">
+              <button
+                type="button"
+                onClick={() => setShowCsvImport(true)}
+                className="flex items-center gap-2 px-3 py-1.5 bg-stone-100 text-stone-700 rounded-lg text-sm font-bold hover:bg-stone-200 transition-all"
+              >
+                <Upload size={14} />
+                Import CSV
+              </button>
+              <button
+                type="button"
+                onClick={() => appendParticipant({ coopId: '', qtySubmitted: 0, scores: { average: 0 }, qtySold: 0, buyers: [] })}
+                className="flex items-center gap-2 px-3 py-1.5 bg-amber-600 text-white rounded-lg text-sm font-bold hover:bg-amber-700 transition-all"
+              >
+                <Plus size={14} />
+                Add participant
+              </button>
+            </div>
+          </div>
+
+          {participantFields.length === 0 && (
+            <p className="text-stone-400 text-sm text-center py-8">
+              No participants yet. Click "Add participant" to add one by one, or "Import CSV" to bulk-load from a spreadsheet.
+            </p>
+          )}
+
+          {participantFields.map((field, index) => (
+            <div key={field.id} className="border border-stone-100 rounded-2xl p-4 space-y-3 bg-stone-50">
+              <div className="flex items-center justify-between">
+                <span className="text-xs font-bold text-stone-500">#{index + 1}</span>
+                <button
+                  type="button"
+                  onClick={() => removeParticipant(index)}
+                  className="p-1 text-stone-400 hover:text-red-500 transition-colors"
+                >
+                  <Trash2 size={14} />
+                </button>
+              </div>
+
+              <div className="grid grid-cols-2 gap-3 sm:grid-cols-4">
+                <div className="col-span-2">
+                  <label className="block text-xs font-bold text-stone-600 mb-1">Cooperative *</label>
+                  <select
+                    {...register(`participants.${index}.coopId`)}
+                    className="w-full px-3 py-2 text-sm border border-stone-200 rounded-lg focus:outline-none focus:ring-2 focus:ring-amber-500 bg-white"
+                  >
+                    <option value="">— select —</option>
+                    {cooperatives.map(c => (
+                      <option key={c.id} value={c.id}>{c.name}</option>
+                    ))}
+                  </select>
+                  {errors.participants?.[index]?.coopId && (
+                    <p className="text-xs text-red-500 mt-1">{errors.participants[index]?.coopId?.message as string}</p>
+                  )}
+                </div>
+
+                <div>
+                  <label className="block text-xs font-bold text-stone-600 mb-1">Avg Score *</label>
+                  <input
+                    type="number"
+                    step="0.01"
+                    {...register(`participants.${index}.scores.average`, { valueAsNumber: true })}
+                    className="w-full px-3 py-2 text-sm border border-stone-200 rounded-lg focus:outline-none focus:ring-2 focus:ring-amber-500"
+                  />
+                </div>
+
+                <div>
+                  <label className="block text-xs font-bold text-stone-600 mb-1">Qty Submitted (kg)</label>
+                  <input
+                    type="number"
+                    step="0.01"
+                    {...register(`participants.${index}.qtySubmitted`, { valueAsNumber: true })}
+                    className="w-full px-3 py-2 text-sm border border-stone-200 rounded-lg focus:outline-none focus:ring-2 focus:ring-amber-500"
+                  />
+                </div>
+
+                <div>
+                  <label className="block text-xs font-bold text-stone-600 mb-1">Qty Sold (kg)</label>
+                  <input
+                    type="number"
+                    step="0.01"
+                    {...register(`participants.${index}.qtySold`, { valueAsNumber: true })}
+                    className="w-full px-3 py-2 text-sm border border-stone-200 rounded-lg focus:outline-none focus:ring-2 focus:ring-amber-500"
+                  />
+                </div>
+              </div>
+
+              <ParticipantBuyersField
+                control={control}
+                register={register}
+                participantIndex={index}
+                errors={errors}
+              />
+            </div>
+          ))}
+        </div>
+
+        <div className="flex justify-end">
+          <button
+            type="submit"
+            disabled={saving}
+            className="flex items-center gap-2 px-6 py-3 bg-stone-900 text-white rounded-xl font-bold hover:bg-stone-800 transition-all disabled:opacity-50"
+          >
+            {saving ? <Loader2 size={16} className="animate-spin" /> : <Check size={16} />}
+            {saving ? 'Saving…' : 'Save edition'}
+          </button>
+        </div>
+      </form>
+
+      {showCsvImport && (
+        <BocCsvImportModal
+          cooperatives={cooperatives}
+          onImport={handleCsvImport}
+          onClose={() => setShowCsvImport(false)}
+        />
+      )}
+    </div>
+  );
+}
+
+// --- BoC Leaderboard ---
+
+type RankedParticipant = EditionParticipant & { coopName: string; rank: number };
+
+function BocLeaderboard({ onCoopSelect }: { onCoopSelect: (coopId: string) => void }) {
+  const [editions, setEditions] = useState<BestOfCongoEdition[]>([]);
+  const [selectedYear, setSelectedYear] = useState<number | null>(null);
+  const [ranked, setRanked] = useState<RankedParticipant[]>([]);
+  const [loadingEditions, setLoadingEditions] = useState(true);
+  const [loadingParticipants, setLoadingParticipants] = useState(false);
+
+  useEffect(() => {
+    getDocs(collection(db, 'bestofcongo_editions'))
+      .then(snap => {
+        const eds = snap.docs
+          .map(d => d.data() as BestOfCongoEdition)
+          .sort((a, b) => b.year - a.year);
+        setEditions(eds);
+        if (eds.length > 0) setSelectedYear(eds[0].year);
+      })
+      .catch(err => handleFirestoreError(err, OperationType.LIST, 'bestofcongo_editions'))
+      .finally(() => setLoadingEditions(false));
+  }, []);
+
+  useEffect(() => {
+    if (!selectedYear) return;
+    setLoadingParticipants(true);
+    getDocs(collection(db, 'bestofcongo_editions', String(selectedYear), 'participants'))
+      .then(snap => {
+        const sorted = snap.docs
+          .map(d => d.data() as EditionParticipant & { coopName: string })
+          .sort((a, b) =>
+            b.scores.average - a.scores.average ||
+            (a.coopName ?? '').localeCompare(b.coopName ?? '')
+          )
+          .map((p, i) => ({ ...p, rank: i + 1 }));
+        setRanked(sorted);
+      })
+      .catch(err => handleFirestoreError(err, OperationType.LIST, `bestofcongo_editions/${selectedYear}/participants`))
+      .finally(() => setLoadingParticipants(false));
+  }, [selectedYear]);
+
+  const handleExport = () => {
+    if (!selectedYear || ranked.length === 0) return;
+    downloadCsv(
+      [
+        ['Rank', 'Cooperative', 'Avg Score', 'Qty Submitted (kg)', 'Qty Sold (kg)', 'Buyers'],
+        ...ranked.map(p => [
+          p.rank,
+          p.coopName,
+          p.scores.average,
+          p.qtySubmitted,
+          p.qtySold,
+          p.buyers.map(b => b.name).join('; '),
+        ]),
+      ],
+      `boc_leaderboard_${selectedYear}.csv`
+    );
+  };
+
+  if (loadingEditions) {
+    return <div className="p-12 text-center"><Loader2 className="animate-spin mx-auto text-amber-600" /></div>;
+  }
+
+  if (editions.length === 0) {
+    return (
+      <div className="max-w-4xl mx-auto p-6">
+        <div className="bg-white border border-stone-200 rounded-2xl p-12 text-center">
+          <div className="w-14 h-14 bg-stone-100 rounded-full flex items-center justify-center mx-auto mb-4 text-stone-300">
+            <Award size={28} />
+          </div>
+          <p className="font-bold text-stone-900">No editions yet</p>
+          <p className="text-stone-500 text-sm mt-1">An admin needs to create the first Best of Congo edition.</p>
+        </div>
+      </div>
+    );
+  }
+
+  return (
+    <div className="max-w-5xl mx-auto p-6 space-y-8">
+      {/* Header */}
+      <div className="flex items-center justify-between">
+        <div>
+          <p className="text-xs font-black text-stone-400 uppercase tracking-widest mb-1">Congo Agri Platform</p>
+          <h2 className="text-3xl font-black text-stone-900 tracking-tight">Best of Congo</h2>
+          <p className="text-stone-500 text-sm mt-1">Annual specialty coffee competition — verified jury scores</p>
+        </div>
+        <button
+          onClick={handleExport}
+          disabled={ranked.length === 0}
+          className="flex items-center gap-2 px-4 py-2 bg-stone-900 text-white rounded-xl text-sm font-bold hover:bg-stone-800 transition-all disabled:opacity-40"
+        >
+          <Download size={14} />
+          Export CSV
+        </button>
+      </div>
+
+      {/* Edition selector — tabs for ≤5 editions */}
+      {editions.length <= 5 ? (
+        <div className="flex gap-1 border-b border-stone-200">
+          {editions.map(e => (
+            <button
+              key={e.year}
+              onClick={() => setSelectedYear(e.year)}
+              className={cn(
+                "px-5 py-2.5 text-sm font-bold border-b-2 -mb-px transition-all",
+                selectedYear === e.year
+                  ? "border-amber-600 text-amber-700"
+                  : "border-transparent text-stone-400 hover:text-stone-700"
+              )}
+            >
+              {e.year}
+            </button>
+          ))}
+        </div>
+      ) : (
+        <select
+          value={selectedYear ?? ''}
+          onChange={e => setSelectedYear(Number(e.target.value))}
+          className="px-4 py-2 border border-stone-200 rounded-xl text-sm font-bold focus:outline-none focus:ring-2 focus:ring-amber-500"
+        >
+          {editions.map(e => <option key={e.year} value={e.year}>{e.year}</option>)}
+        </select>
+      )}
+
+      {/* Leaderboard */}
+      {loadingParticipants ? (
+        <div className="p-12 text-center"><Loader2 className="animate-spin mx-auto text-amber-600" /></div>
+      ) : ranked.length === 0 ? (
+        <div className="bg-white border border-stone-200 rounded-2xl p-10 text-center text-stone-400 text-sm">
+          No participants recorded for {selectedYear}.
+        </div>
+      ) : (
+        <div className="bg-white rounded-3xl border border-stone-200 shadow-sm overflow-hidden">
+          <table className="w-full text-sm">
+            <thead>
+              <tr className="bg-stone-50 border-b border-stone-100">
+                <th className="px-4 py-3 text-left text-xs font-black text-stone-400 uppercase tracking-widest w-12">#</th>
+                <th className="px-4 py-3 text-left text-xs font-black text-stone-400 uppercase tracking-widest">Cooperative</th>
+                <th className="px-4 py-3 text-left text-xs font-black text-stone-400 uppercase tracking-widest">Avg Score</th>
+                <th className="px-4 py-3 text-left text-xs font-black text-stone-400 uppercase tracking-widest">Submitted (kg)</th>
+                <th className="px-4 py-3 text-left text-xs font-black text-stone-400 uppercase tracking-widest">Sold (kg)</th>
+                <th className="px-4 py-3 text-left text-xs font-black text-stone-400 uppercase tracking-widest">Buyers</th>
+              </tr>
+            </thead>
+            <tbody>
+              {ranked.map(p => (
+                <tr
+                  key={p.coopId}
+                  onClick={() => onCoopSelect(p.coopId)}
+                  className="border-b border-stone-50 hover:bg-amber-50 cursor-pointer transition-colors group"
+                >
+                  <td className="px-4 py-3">
+                    <span className={cn(
+                      "inline-flex items-center justify-center w-7 h-7 rounded-full text-xs font-black",
+                      p.rank === 1 ? "bg-amber-400 text-white" :
+                      p.rank === 2 ? "bg-stone-300 text-stone-800" :
+                      p.rank === 3 ? "bg-amber-700 text-white" :
+                      "bg-stone-100 text-stone-500"
+                    )}>
+                      {p.rank}
+                    </span>
+                  </td>
+                  <td className="px-4 py-3 font-bold text-stone-900 group-hover:text-amber-700 transition-colors">
+                    {p.coopName}
+                  </td>
+                  <td className="px-4 py-3">
+                    <span className="font-bold text-amber-700 text-base">{p.scores.average}</span>
+                    <span className="text-xs text-stone-400 ml-1">pts</span>
+                  </td>
+                  <td className="px-4 py-3 text-stone-600">{p.qtySubmitted.toLocaleString()}</td>
+                  <td className="px-4 py-3 text-stone-600">{p.qtySold.toLocaleString()}</td>
+                  <td className="px-4 py-3">
+                    <div className="flex flex-wrap gap-1">
+                      {p.buyers.length === 0 ? (
+                        <span className="text-stone-300">—</span>
+                      ) : (
+                        p.buyers.map((b, i) => (
+                          b.logoUrl ? (
+                            <img
+                              key={i}
+                              src={b.logoUrl}
+                              alt={b.name}
+                              title={b.name}
+                              className="h-6 w-auto max-w-[80px] object-contain rounded"
+                              onError={onLogoError}
+                            />
+                          ) : (
+                            <span key={i} className="px-2 py-0.5 bg-stone-100 text-stone-700 text-xs rounded-md">
+                              {b.name}
+                            </span>
+                          )
+                        ))
+                      )}
+                    </div>
+                  </td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+      )}
+    </div>
+  );
+}
+
+// --- BoC History Tab ---
+
+function BocHistoryTab({ coopId }: { coopId: string }) {
+  const [rows, setRows] = useState<{ year: number; participant: EditionParticipant }[]>([]);
+  const [loading, setLoading] = useState(true);
+  const [indexError, setIndexError] = useState(false);
+
+  useEffect(() => {
+    if (!coopId) return;
+    setLoading(true);
+    setIndexError(false);
+
+    getDocs(
+      query(collectionGroup(db, 'participants'), where('coopId', '==', coopId))
+    )
+      .then(snap => {
+        const results = snap.docs.map(d => ({
+          year: parseInt(d.ref.parent.parent?.id ?? '0', 10),
+          participant: d.data() as EditionParticipant,
+        }));
+        results.sort((a, b) => a.year - b.year);
+        setRows(results);
+      })
+      .catch(err => {
+        const msg = err instanceof Error ? err.message : String(err);
+        if (msg.includes('index') || msg.includes('requires an index')) {
+          setIndexError(true);
+        } else {
+          handleFirestoreError(err, OperationType.LIST, 'bestofcongo_editions/*/participants');
+        }
+      })
+      .finally(() => setLoading(false));
+  }, [coopId]);
+
+  if (loading) {
+    return (
+      <div className="p-12 text-center">
+        <Loader2 className="animate-spin mx-auto text-amber-600" />
+      </div>
+    );
+  }
+
+  if (indexError) {
+    return (
+      <div className="bg-amber-50 border border-amber-200 rounded-2xl p-6 text-sm text-amber-900">
+        <p className="font-bold mb-1">Firestore index required</p>
+        <p>Create a collection group index for <code>participants.coopId</code> in the Firestore console, then reload.</p>
+      </div>
+    );
+  }
+
+  if (rows.length === 0) {
+    return (
+      <div className="bg-white border border-stone-200 rounded-2xl p-12 text-center">
+        <div className="w-14 h-14 bg-stone-100 rounded-full flex items-center justify-center mx-auto mb-4 text-stone-300">
+          <Award size={28} />
+        </div>
+        <p className="font-bold text-stone-900">No competition history</p>
+        <p className="text-stone-500 text-sm mt-1">This cooperative has not participated in the Best of Congo competition yet.</p>
+      </div>
+    );
+  }
+
+  const chartData = rows.map(r => ({ year: r.year, score: r.participant.scores.average }));
+
+  return (
+    <div className="space-y-6">
+      {/* Score trend chart */}
+      <div className="bg-white p-6 rounded-2xl border border-stone-200 shadow-sm">
+        <h3 className="text-sm font-black text-stone-400 uppercase tracking-widest mb-4">Score trend</h3>
+        <ResponsiveContainer width="100%" height={200}>
+          <LineChart data={chartData} margin={{ top: 5, right: 20, left: 0, bottom: 5 }}>
+            <CartesianGrid strokeDasharray="3 3" stroke="#f5f5f4" />
+            <XAxis dataKey="year" tick={{ fontSize: 12 }} />
+            <YAxis domain={['auto', 'auto']} tick={{ fontSize: 12 }} />
+            <Tooltip
+              formatter={(value) => [`${value ?? '—'} pts`, 'Avg Score']}
+              labelFormatter={(label) => `${label}`}
+            />
+            <Line
+              type="monotone"
+              dataKey="score"
+              stroke="#d97706"
+              strokeWidth={2}
+              dot={{ fill: '#d97706', r: 4 }}
+              activeDot={{ r: 6 }}
+            />
+          </LineChart>
+        </ResponsiveContainer>
+      </div>
+
+      {/* Year-by-year table */}
+      <div className="bg-white rounded-2xl border border-stone-200 shadow-sm overflow-hidden">
+        <table className="w-full text-sm">
+          <thead>
+            <tr className="bg-stone-50 border-b border-stone-100">
+              <th className="px-4 py-3 text-left text-xs font-black text-stone-400 uppercase tracking-widest">Year</th>
+              <th className="px-4 py-3 text-left text-xs font-black text-stone-400 uppercase tracking-widest">Avg Score</th>
+              <th className="px-4 py-3 text-left text-xs font-black text-stone-400 uppercase tracking-widest">Submitted (kg)</th>
+              <th className="px-4 py-3 text-left text-xs font-black text-stone-400 uppercase tracking-widest">Sold (kg)</th>
+              <th className="px-4 py-3 text-left text-xs font-black text-stone-400 uppercase tracking-widest">Buyers</th>
+            </tr>
+          </thead>
+          <tbody>
+            {rows.map(({ year, participant }) => (
+              <tr key={year} className="border-b border-stone-50 hover:bg-stone-50 transition-colors">
+                <td className="px-4 py-3 font-bold text-stone-900">{year}</td>
+                <td className="px-4 py-3">
+                  <span className="font-bold text-amber-700">{participant.scores.average} pts</span>
+                </td>
+                <td className="px-4 py-3 text-stone-600">{participant.qtySubmitted.toLocaleString()}</td>
+                <td className="px-4 py-3 text-stone-600">{participant.qtySold.toLocaleString()}</td>
+                <td className="px-4 py-3">
+                  <div className="flex flex-wrap gap-1">
+                    {participant.buyers.length === 0 ? (
+                      <span className="text-stone-400">—</span>
+                    ) : (
+                      participant.buyers.map((b, i) => (
+                        <span key={i} className="px-2 py-0.5 bg-stone-100 text-stone-700 text-xs rounded-md">
+                          {b.name}
+                        </span>
+                      ))
+                    )}
+                  </div>
+                </td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      </div>
+    </div>
+  );
+}
+
+// --- Faceted Filter Panel ---
+
+interface FacetFilters {
+  searchQuery: string;
+  selectedCerts: string[];
+  selectedProcessing: string[];
+  altMin: string;
+  altMax: string;
+  minScore: string;
+  bocOnly: boolean;
+}
+
+function FacetedFilterPanel({
+  filters,
+  onChange,
+  processingOptions,
+  totalCount,
+  filteredCount,
+}: {
+  filters: FacetFilters;
+  onChange: (f: Partial<FacetFilters>) => void;
+  processingOptions: string[];
+  totalCount: number;
+  filteredCount: number;
+}) {
+  const [open, setOpen] = useState(false);
+  const hasActiveFilters =
+    filters.selectedCerts.length > 0 ||
+    filters.selectedProcessing.length > 0 ||
+    filters.altMin !== '' ||
+    filters.altMax !== '' ||
+    filters.minScore !== '' ||
+    filters.bocOnly;
+
+  const toggleCert = (c: string) =>
+    onChange({ selectedCerts: filters.selectedCerts.includes(c) ? filters.selectedCerts.filter(x => x !== c) : [...filters.selectedCerts, c] });
+
+  const toggleProcessing = (m: string) =>
+    onChange({ selectedProcessing: filters.selectedProcessing.includes(m) ? filters.selectedProcessing.filter(x => x !== m) : [...filters.selectedProcessing, m] });
+
+  const clearAll = () =>
+    onChange({ selectedCerts: [], selectedProcessing: [], altMin: '', altMax: '', minScore: '', bocOnly: false });
+
+  return (
+    <div className="space-y-2">
+      {/* Search + filter toggle row */}
+      <div className="flex gap-2">
+        <div className="relative flex-1">
+          <Search size={14} className="absolute left-3 top-1/2 -translate-y-1/2 text-stone-400 pointer-events-none" />
+          <input
+            value={filters.searchQuery}
+            onChange={e => onChange({ searchQuery: e.target.value })}
+            placeholder="Search cooperatives…"
+            className="w-full pl-8 pr-3 py-2 text-sm border border-stone-200 rounded-xl focus:outline-none focus:ring-2 focus:ring-amber-500 bg-white"
+          />
+        </div>
+        <button
+          onClick={() => setOpen(o => !o)}
+          className={cn(
+            "p-2 rounded-xl border transition-all flex items-center gap-1 text-xs font-bold",
+            open || hasActiveFilters
+              ? "bg-amber-600 text-white border-amber-600"
+              : "bg-white text-stone-500 border-stone-200 hover:border-stone-300"
+          )}
+        >
+          <Filter size={14} />
+          {hasActiveFilters && (
+            <span className="w-4 h-4 bg-white text-amber-700 rounded-full text-[10px] flex items-center justify-center font-black">
+              {[filters.selectedCerts.length > 0, filters.selectedProcessing.length > 0, filters.altMin !== '', filters.altMax !== '', filters.minScore !== '', filters.bocOnly].filter(Boolean).length}
+            </span>
+          )}
+        </button>
+      </div>
+
+      {/* Result count */}
+      <p className="text-[10px] font-bold text-stone-400 uppercase tracking-widest">
+        {filteredCount === totalCount
+          ? `${totalCount} cooperatives`
+          : `${filteredCount} of ${totalCount} cooperatives`}
+      </p>
+
+      {/* Filter panel */}
+      {open && (
+        <div className="bg-white border border-stone-200 rounded-2xl p-4 space-y-5 shadow-sm">
+          {hasActiveFilters && (
+            <button onClick={clearAll} className="text-xs font-bold text-red-500 hover:text-red-700 flex items-center gap-1">
+              <X size={12} /> Clear all filters
+            </button>
+          )}
+
+          {/* Certifications */}
+          <div>
+            <p className="text-[10px] font-black text-stone-400 uppercase tracking-widest mb-2">Certifications</p>
+            <div className="flex flex-wrap gap-1.5">
+              {CANONICAL_CERTIFICATIONS.map(cert => (
+                <button
+                  key={cert}
+                  onClick={() => toggleCert(cert)}
+                  className={cn(
+                    "px-2.5 py-1 text-xs font-bold rounded-lg border transition-all",
+                    filters.selectedCerts.includes(cert)
+                      ? "bg-amber-600 text-white border-amber-600"
+                      : "bg-stone-50 text-stone-600 border-stone-200 hover:border-amber-400"
+                  )}
+                >
+                  {cert}
+                </button>
+              ))}
+            </div>
+          </div>
+
+          {/* Processing methods */}
+          {processingOptions.length > 0 && (
+            <div>
+              <p className="text-[10px] font-black text-stone-400 uppercase tracking-widest mb-2">Processing Method</p>
+              <div className="flex flex-wrap gap-1.5">
+                {processingOptions.map(m => (
+                  <button
+                    key={m}
+                    onClick={() => toggleProcessing(m)}
+                    className={cn(
+                      "px-2.5 py-1 text-xs font-bold rounded-lg border transition-all",
+                      filters.selectedProcessing.includes(m)
+                        ? "bg-stone-900 text-white border-stone-900"
+                        : "bg-stone-50 text-stone-600 border-stone-200 hover:border-stone-400"
+                    )}
+                  >
+                    {m}
+                  </button>
+                ))}
+              </div>
+            </div>
+          )}
+
+          {/* Altitude range */}
+          <div>
+            <p className="text-[10px] font-black text-stone-400 uppercase tracking-widest mb-2">Altitude (m)</p>
+            <div className="flex items-center gap-2">
+              <input
+                type="number"
+                value={filters.altMin}
+                onChange={e => onChange({ altMin: e.target.value })}
+                placeholder="Min"
+                className="w-full px-3 py-1.5 text-sm border border-stone-200 rounded-lg focus:outline-none focus:ring-2 focus:ring-amber-500"
+              />
+              <span className="text-stone-400 text-xs">–</span>
+              <input
+                type="number"
+                value={filters.altMax}
+                onChange={e => onChange({ altMax: e.target.value })}
+                placeholder="Max"
+                className="w-full px-3 py-1.5 text-sm border border-stone-200 rounded-lg focus:outline-none focus:ring-2 focus:ring-amber-500"
+              />
+            </div>
+          </div>
+
+          {/* Min cupping score */}
+          <div>
+            <p className="text-[10px] font-black text-stone-400 uppercase tracking-widest mb-2">Min Cupping Score</p>
+            <input
+              type="number"
+              value={filters.minScore}
+              onChange={e => onChange({ minScore: e.target.value })}
+              placeholder="e.g. 84"
+              min={0}
+              max={100}
+              className="w-full px-3 py-1.5 text-sm border border-stone-200 rounded-lg focus:outline-none focus:ring-2 focus:ring-amber-500"
+            />
+          </div>
+
+          {/* BoC participant toggle */}
+          <div className="flex items-center justify-between">
+            <div>
+              <p className="text-xs font-bold text-stone-700">Best of Congo participants only</p>
+              <p className="text-[10px] text-stone-400">Filter to competition-verified coops</p>
+            </div>
+            <button
+              onClick={() => onChange({ bocOnly: !filters.bocOnly })}
+              className={cn(
+                "relative w-10 h-6 rounded-full transition-colors",
+                filters.bocOnly ? "bg-amber-600" : "bg-stone-200"
+              )}
+            >
+              <span className={cn(
+                "absolute top-1 w-4 h-4 bg-white rounded-full shadow transition-transform",
+                filters.bocOnly ? "translate-x-5" : "translate-x-1"
+              )} />
+            </button>
+          </div>
+        </div>
+      )}
+    </div>
+  );
+}
+
+// --- How It Works Modal ---
+
+function HowItWorksModal({ open, onClose }: { open: boolean; onClose: () => void }) {
+  const { t } = useTranslation();
+  const steps = [
+    { num: 1, icon: Upload, title: t('step1Title'), desc: t('step1Desc'), color: 'bg-amber-100 text-amber-700' },
+    { num: 2, icon: Loader2, title: t('step2Title'), desc: t('step2Desc'), color: 'bg-blue-100 text-blue-700' },
+    { num: 3, icon: Shield, title: t('step3Title'), desc: t('step3Desc'), color: 'bg-green-100 text-green-700' },
+    { num: 4, icon: Globe, title: t('step4Title'), desc: t('step4Desc'), color: 'bg-stone-100 text-stone-700' },
+  ];
+
+  return (
+    <AnimatePresence>
+      {open && (
+        <motion.div
+          initial={{ opacity: 0 }}
+          animate={{ opacity: 1 }}
+          exit={{ opacity: 0 }}
+          className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/50 backdrop-blur-sm"
+          onClick={onClose}
+        >
+          <motion.div
+            initial={{ opacity: 0, scale: 0.95, y: 16 }}
+            animate={{ opacity: 1, scale: 1, y: 0 }}
+            exit={{ opacity: 0, scale: 0.95, y: 16 }}
+            transition={{ duration: 0.2 }}
+            className="bg-white rounded-2xl shadow-2xl max-w-2xl w-full p-8 relative"
+            onClick={e => e.stopPropagation()}
+          >
+            <button
+              onClick={onClose}
+              className="absolute top-4 right-4 p-2 text-stone-400 hover:text-stone-700 transition-colors rounded-lg hover:bg-stone-100"
+            >
+              <X size={18} />
+            </button>
+
+            <div className="mb-8">
+              <div className="flex items-center gap-3 mb-3">
+                <div className="w-9 h-9 bg-amber-900 rounded-lg flex items-center justify-center">
+                  <Coffee size={18} className="text-white" />
+                </div>
+                <h2 className="text-2xl font-black text-stone-900">{t('howItWorksTitle')}</h2>
+              </div>
+              <p className="text-stone-500 text-sm leading-relaxed">{t('howItWorksSubtitle')}</p>
+            </div>
+
+            {/* Pipeline steps */}
+            <div className="space-y-4">
+              {steps.map((step, idx) => (
+                <div key={step.num} className="flex gap-4 items-start">
+                  <div className="flex flex-col items-center gap-1 shrink-0">
+                    <div className={cn('w-9 h-9 rounded-xl flex items-center justify-center', step.color)}>
+                      <step.icon size={16} />
+                    </div>
+                    {idx < steps.length - 1 && (
+                      <div className="w-px h-6 bg-stone-200" />
+                    )}
+                  </div>
+                  <div className="pb-1">
+                    <p className="text-xs font-black text-stone-400 uppercase tracking-widest mb-0.5">Step {step.num}</p>
+                    <p className="font-bold text-stone-900 text-sm mb-1">{step.title}</p>
+                    <p className="text-stone-500 text-xs leading-relaxed">{step.desc}</p>
+                  </div>
+                </div>
+              ))}
+            </div>
+
+            <div className="mt-8 pt-6 border-t border-stone-100 flex justify-end">
+              <button
+                onClick={onClose}
+                className="px-6 py-2.5 bg-amber-900 text-white rounded-xl text-sm font-bold hover:bg-amber-800 transition-colors"
+              >
+                {t('close')}
+              </button>
+            </div>
+          </motion.div>
+        </motion.div>
+      )}
+    </AnimatePresence>
   );
 }
 
