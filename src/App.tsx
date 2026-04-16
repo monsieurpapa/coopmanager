@@ -2129,12 +2129,95 @@ function FacetedFilterPanel({
   );
 }
 
+// --- How It Works Modal ---
+
+function HowItWorksModal({ open, onClose }: { open: boolean; onClose: () => void }) {
+  const { t } = useTranslation();
+  const steps = [
+    { num: 1, icon: Upload, title: t('step1Title'), desc: t('step1Desc'), color: 'bg-amber-100 text-amber-700' },
+    { num: 2, icon: Loader2, title: t('step2Title'), desc: t('step2Desc'), color: 'bg-blue-100 text-blue-700' },
+    { num: 3, icon: Shield, title: t('step3Title'), desc: t('step3Desc'), color: 'bg-green-100 text-green-700' },
+    { num: 4, icon: Globe, title: t('step4Title'), desc: t('step4Desc'), color: 'bg-stone-100 text-stone-700' },
+  ];
+
+  return (
+    <AnimatePresence>
+      {open && (
+        <motion.div
+          initial={{ opacity: 0 }}
+          animate={{ opacity: 1 }}
+          exit={{ opacity: 0 }}
+          className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/50 backdrop-blur-sm"
+          onClick={onClose}
+        >
+          <motion.div
+            initial={{ opacity: 0, scale: 0.95, y: 16 }}
+            animate={{ opacity: 1, scale: 1, y: 0 }}
+            exit={{ opacity: 0, scale: 0.95, y: 16 }}
+            transition={{ duration: 0.2 }}
+            className="bg-white rounded-2xl shadow-2xl max-w-2xl w-full p-8 relative"
+            onClick={e => e.stopPropagation()}
+          >
+            <button
+              onClick={onClose}
+              className="absolute top-4 right-4 p-2 text-stone-400 hover:text-stone-700 transition-colors rounded-lg hover:bg-stone-100"
+            >
+              <X size={18} />
+            </button>
+
+            <div className="mb-8">
+              <div className="flex items-center gap-3 mb-3">
+                <div className="w-9 h-9 bg-amber-900 rounded-lg flex items-center justify-center">
+                  <Coffee size={18} className="text-white" />
+                </div>
+                <h2 className="text-2xl font-black text-stone-900">{t('howItWorksTitle')}</h2>
+              </div>
+              <p className="text-stone-500 text-sm leading-relaxed">{t('howItWorksSubtitle')}</p>
+            </div>
+
+            {/* Pipeline steps */}
+            <div className="space-y-4">
+              {steps.map((step, idx) => (
+                <div key={step.num} className="flex gap-4 items-start">
+                  <div className="flex flex-col items-center gap-1 shrink-0">
+                    <div className={cn('w-9 h-9 rounded-xl flex items-center justify-center', step.color)}>
+                      <step.icon size={16} />
+                    </div>
+                    {idx < steps.length - 1 && (
+                      <div className="w-px h-6 bg-stone-200" />
+                    )}
+                  </div>
+                  <div className="pb-1">
+                    <p className="text-xs font-black text-stone-400 uppercase tracking-widest mb-0.5">Step {step.num}</p>
+                    <p className="font-bold text-stone-900 text-sm mb-1">{step.title}</p>
+                    <p className="text-stone-500 text-xs leading-relaxed">{step.desc}</p>
+                  </div>
+                </div>
+              ))}
+            </div>
+
+            <div className="mt-8 pt-6 border-t border-stone-100 flex justify-end">
+              <button
+                onClick={onClose}
+                className="px-6 py-2.5 bg-amber-900 text-white rounded-xl text-sm font-bold hover:bg-amber-800 transition-colors"
+              >
+                {t('close')}
+              </button>
+            </div>
+          </motion.div>
+        </motion.div>
+      )}
+    </AnimatePresence>
+  );
+}
+
 function AppContent() {
   const { t } = useTranslation();
   const [selectedCoopId, setSelectedCoopId] = useState<string | null>(null);
   const [detailTab, setDetailTab] = useState<'overview' | 'boc-history'>('overview');
   const [comparisonIds, setComparisonIds] = useState<string[]>([]);
   const [isProfileModalOpen, setIsProfileModalOpen] = useState(false);
+  const [isAboutOpen, setIsAboutOpen] = useState(false);
   const [currentView, setCurrentView] = useState<'directory' | 'comparison' | 'staging' | 'portal' | 'boc-admin' | 'leaderboard'>('directory');
   const [hoveredCoopId, setHoveredCoopId] = useState<string | null>(null);
   const [user, setUser] = useState<FirebaseUser | null>(null);
@@ -2269,6 +2352,7 @@ function AppContent() {
   return (
     <div className="min-h-screen bg-[#faf9f6] text-stone-900 font-sans selection:bg-amber-100">
       <Toaster position="bottom-right" toastOptions={{ duration: 4000 }} />
+      <HowItWorksModal open={isAboutOpen} onClose={() => setIsAboutOpen(false)} />
       {/* Header */}
       <header className="sticky top-0 z-40 bg-white/80 backdrop-blur-md border-b border-stone-200">
         <div className="max-w-7xl mx-auto px-4 h-16 flex items-center justify-between">
@@ -2313,6 +2397,13 @@ function AppContent() {
               >
                 <Award size={14} />
                 Best of Congo
+              </button>
+              <button
+                onClick={() => setIsAboutOpen(true)}
+                className="px-4 py-2 rounded-full text-sm font-bold transition-all text-stone-500 hover:text-stone-900 flex items-center gap-2"
+              >
+                <Info size={14} />
+                {t('about')}
               </button>
               {userProfile?.role === 'admin' && (
                 <button
