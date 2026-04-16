@@ -1578,9 +1578,144 @@ function BocEditionAdmin({ cooperatives }: { cooperatives: CoffeeCooperative[] }
   );
 }
 
+// --- BoC History Tab ---
+
+function BocHistoryTab({ coopId }: { coopId: string }) {
+  const [rows, setRows] = useState<{ year: number; participant: EditionParticipant }[]>([]);
+  const [loading, setLoading] = useState(true);
+  const [indexError, setIndexError] = useState(false);
+
+  useEffect(() => {
+    if (!coopId) return;
+    setLoading(true);
+    setIndexError(false);
+
+    getDocs(
+      query(collectionGroup(db, 'participants'), where('coopId', '==', coopId))
+    )
+      .then(snap => {
+        const results = snap.docs.map(d => ({
+          year: parseInt(d.ref.parent.parent?.id ?? '0', 10),
+          participant: d.data() as EditionParticipant,
+        }));
+        results.sort((a, b) => a.year - b.year);
+        setRows(results);
+      })
+      .catch(err => {
+        const msg = err instanceof Error ? err.message : String(err);
+        if (msg.includes('index') || msg.includes('requires an index')) {
+          setIndexError(true);
+        } else {
+          handleFirestoreError(err, OperationType.LIST, 'bestofcongo_editions/*/participants');
+        }
+      })
+      .finally(() => setLoading(false));
+  }, [coopId]);
+
+  if (loading) {
+    return (
+      <div className="p-12 text-center">
+        <Loader2 className="animate-spin mx-auto text-amber-600" />
+      </div>
+    );
+  }
+
+  if (indexError) {
+    return (
+      <div className="bg-amber-50 border border-amber-200 rounded-2xl p-6 text-sm text-amber-900">
+        <p className="font-bold mb-1">Firestore index required</p>
+        <p>Create a collection group index for <code>participants.coopId</code> in the Firestore console, then reload.</p>
+      </div>
+    );
+  }
+
+  if (rows.length === 0) {
+    return (
+      <div className="bg-white border border-stone-200 rounded-2xl p-12 text-center">
+        <div className="w-14 h-14 bg-stone-100 rounded-full flex items-center justify-center mx-auto mb-4 text-stone-300">
+          <Award size={28} />
+        </div>
+        <p className="font-bold text-stone-900">No competition history</p>
+        <p className="text-stone-500 text-sm mt-1">This cooperative has not participated in the Best of Congo competition yet.</p>
+      </div>
+    );
+  }
+
+  const chartData = rows.map(r => ({ year: r.year, score: r.participant.scores.average }));
+
+  return (
+    <div className="space-y-6">
+      {/* Score trend chart */}
+      <div className="bg-white p-6 rounded-2xl border border-stone-200 shadow-sm">
+        <h3 className="text-sm font-black text-stone-400 uppercase tracking-widest mb-4">Score trend</h3>
+        <ResponsiveContainer width="100%" height={200}>
+          <LineChart data={chartData} margin={{ top: 5, right: 20, left: 0, bottom: 5 }}>
+            <CartesianGrid strokeDasharray="3 3" stroke="#f5f5f4" />
+            <XAxis dataKey="year" tick={{ fontSize: 12 }} />
+            <YAxis domain={['auto', 'auto']} tick={{ fontSize: 12 }} />
+            <Tooltip
+              formatter={(value) => [`${value ?? '—'} pts`, 'Avg Score']}
+              labelFormatter={(label) => `${label}`}
+            />
+            <Line
+              type="monotone"
+              dataKey="score"
+              stroke="#d97706"
+              strokeWidth={2}
+              dot={{ fill: '#d97706', r: 4 }}
+              activeDot={{ r: 6 }}
+            />
+          </LineChart>
+        </ResponsiveContainer>
+      </div>
+
+      {/* Year-by-year table */}
+      <div className="bg-white rounded-2xl border border-stone-200 shadow-sm overflow-hidden">
+        <table className="w-full text-sm">
+          <thead>
+            <tr className="bg-stone-50 border-b border-stone-100">
+              <th className="px-4 py-3 text-left text-xs font-black text-stone-400 uppercase tracking-widest">Year</th>
+              <th className="px-4 py-3 text-left text-xs font-black text-stone-400 uppercase tracking-widest">Avg Score</th>
+              <th className="px-4 py-3 text-left text-xs font-black text-stone-400 uppercase tracking-widest">Submitted (kg)</th>
+              <th className="px-4 py-3 text-left text-xs font-black text-stone-400 uppercase tracking-widest">Sold (kg)</th>
+              <th className="px-4 py-3 text-left text-xs font-black text-stone-400 uppercase tracking-widest">Buyers</th>
+            </tr>
+          </thead>
+          <tbody>
+            {rows.map(({ year, participant }) => (
+              <tr key={year} className="border-b border-stone-50 hover:bg-stone-50 transition-colors">
+                <td className="px-4 py-3 font-bold text-stone-900">{year}</td>
+                <td className="px-4 py-3">
+                  <span className="font-bold text-amber-700">{participant.scores.average} pts</span>
+                </td>
+                <td className="px-4 py-3 text-stone-600">{participant.qtySubmitted.toLocaleString()}</td>
+                <td className="px-4 py-3 text-stone-600">{participant.qtySold.toLocaleString()}</td>
+                <td className="px-4 py-3">
+                  <div className="flex flex-wrap gap-1">
+                    {participant.buyers.length === 0 ? (
+                      <span className="text-stone-400">—</span>
+                    ) : (
+                      participant.buyers.map((b, i) => (
+                        <span key={i} className="px-2 py-0.5 bg-stone-100 text-stone-700 text-xs rounded-md">
+                          {b.name}
+                        </span>
+                      ))
+                    )}
+                  </div>
+                </td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      </div>
+    </div>
+  );
+}
+
 function AppContent() {
   const { t } = useTranslation();
   const [selectedCoopId, setSelectedCoopId] = useState<string | null>(null);
+  const [detailTab, setDetailTab] = useState<'overview' | 'boc-history'>('overview');
   const [comparisonIds, setComparisonIds] = useState<string[]>([]);
   const [isProfileModalOpen, setIsProfileModalOpen] = useState(false);
   const [currentView, setCurrentView] = useState<'directory' | 'comparison' | 'staging' | 'portal' | 'boc-admin'>('directory');
@@ -1668,10 +1803,12 @@ function AppContent() {
     setCurrentView('directory');
   };
 
-  const selectedCoop = useMemo(() => 
+  const selectedCoop = useMemo(() =>
     cooperatives.find(c => c.id === selectedCoopId),
     [selectedCoopId, cooperatives]
   );
+
+  useEffect(() => { setDetailTab('overview'); }, [selectedCoopId]);
 
   const toggleComparison = (id: string) => {
     setComparisonIds(prev => 
@@ -2034,6 +2171,25 @@ function AppContent() {
                       </div>
                     </div>
 
+                    {/* Tab bar */}
+                    <div className="flex gap-1 border-b border-stone-200 -mb-2">
+                      {(['overview', 'boc-history'] as const).map(tab => (
+                        <button
+                          key={tab}
+                          onClick={() => setDetailTab(tab)}
+                          className={cn(
+                            "px-4 py-2 text-sm font-bold border-b-2 -mb-px transition-all",
+                            detailTab === tab
+                              ? "border-amber-600 text-amber-700"
+                              : "border-transparent text-stone-400 hover:text-stone-700"
+                          )}
+                        >
+                          {tab === 'overview' ? 'Overview' : 'Best of Congo'}
+                        </button>
+                      ))}
+                    </div>
+
+                    {detailTab === 'overview' && (<>
                     {/* Stats Grid */}
                     <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
                       <StatCard icon={Users} label={t('members')} value={selectedCoop.members.toLocaleString()} />
@@ -2174,6 +2330,11 @@ function AppContent() {
                         </div>
                       </div>
                     </div>
+                    </>)}
+
+                    {detailTab === 'boc-history' && (
+                      <BocHistoryTab coopId={selectedCoop.id} />
+                    )}
                   </motion.div>
                 ) : (
                   <div className="h-full flex flex-col items-center justify-center text-center p-12 border-2 border-dashed border-stone-200 rounded-3xl bg-white/30">
