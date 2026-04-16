@@ -75,6 +75,11 @@ class ErrorBoundary extends React.Component<{ children: React.ReactNode }, { has
   }
 }
 
+// --- Constants ---
+
+const CANONICAL_CERTIFICATIONS = ['Fairtrade', 'Bio-NOP', 'Bio-UE', 'Bio-BRA', 'RainForest Alliance', 'UTZ'];
+const ADMIN_EMAIL = 'dieudonneishara@gmail.com';
+
 // --- CSV helpers ---
 
 function escapeCsvCell(value: unknown): string {
@@ -1929,6 +1934,201 @@ function BocHistoryTab({ coopId }: { coopId: string }) {
   );
 }
 
+// --- Faceted Filter Panel ---
+
+interface FacetFilters {
+  searchQuery: string;
+  selectedCerts: string[];
+  selectedProcessing: string[];
+  altMin: string;
+  altMax: string;
+  minScore: string;
+  bocOnly: boolean;
+}
+
+function FacetedFilterPanel({
+  filters,
+  onChange,
+  processingOptions,
+  totalCount,
+  filteredCount,
+}: {
+  filters: FacetFilters;
+  onChange: (f: Partial<FacetFilters>) => void;
+  processingOptions: string[];
+  totalCount: number;
+  filteredCount: number;
+}) {
+  const [open, setOpen] = useState(false);
+  const hasActiveFilters =
+    filters.selectedCerts.length > 0 ||
+    filters.selectedProcessing.length > 0 ||
+    filters.altMin !== '' ||
+    filters.altMax !== '' ||
+    filters.minScore !== '' ||
+    filters.bocOnly;
+
+  const toggleCert = (c: string) =>
+    onChange({ selectedCerts: filters.selectedCerts.includes(c) ? filters.selectedCerts.filter(x => x !== c) : [...filters.selectedCerts, c] });
+
+  const toggleProcessing = (m: string) =>
+    onChange({ selectedProcessing: filters.selectedProcessing.includes(m) ? filters.selectedProcessing.filter(x => x !== m) : [...filters.selectedProcessing, m] });
+
+  const clearAll = () =>
+    onChange({ selectedCerts: [], selectedProcessing: [], altMin: '', altMax: '', minScore: '', bocOnly: false });
+
+  return (
+    <div className="space-y-2">
+      {/* Search + filter toggle row */}
+      <div className="flex gap-2">
+        <div className="relative flex-1">
+          <Search size={14} className="absolute left-3 top-1/2 -translate-y-1/2 text-stone-400 pointer-events-none" />
+          <input
+            value={filters.searchQuery}
+            onChange={e => onChange({ searchQuery: e.target.value })}
+            placeholder="Search cooperatives…"
+            className="w-full pl-8 pr-3 py-2 text-sm border border-stone-200 rounded-xl focus:outline-none focus:ring-2 focus:ring-amber-500 bg-white"
+          />
+        </div>
+        <button
+          onClick={() => setOpen(o => !o)}
+          className={cn(
+            "p-2 rounded-xl border transition-all flex items-center gap-1 text-xs font-bold",
+            open || hasActiveFilters
+              ? "bg-amber-600 text-white border-amber-600"
+              : "bg-white text-stone-500 border-stone-200 hover:border-stone-300"
+          )}
+        >
+          <Filter size={14} />
+          {hasActiveFilters && (
+            <span className="w-4 h-4 bg-white text-amber-700 rounded-full text-[10px] flex items-center justify-center font-black">
+              {[filters.selectedCerts.length > 0, filters.selectedProcessing.length > 0, filters.altMin !== '', filters.altMax !== '', filters.minScore !== '', filters.bocOnly].filter(Boolean).length}
+            </span>
+          )}
+        </button>
+      </div>
+
+      {/* Result count */}
+      <p className="text-[10px] font-bold text-stone-400 uppercase tracking-widest">
+        {filteredCount === totalCount
+          ? `${totalCount} cooperatives`
+          : `${filteredCount} of ${totalCount} cooperatives`}
+      </p>
+
+      {/* Filter panel */}
+      {open && (
+        <div className="bg-white border border-stone-200 rounded-2xl p-4 space-y-5 shadow-sm">
+          {hasActiveFilters && (
+            <button onClick={clearAll} className="text-xs font-bold text-red-500 hover:text-red-700 flex items-center gap-1">
+              <X size={12} /> Clear all filters
+            </button>
+          )}
+
+          {/* Certifications */}
+          <div>
+            <p className="text-[10px] font-black text-stone-400 uppercase tracking-widest mb-2">Certifications</p>
+            <div className="flex flex-wrap gap-1.5">
+              {CANONICAL_CERTIFICATIONS.map(cert => (
+                <button
+                  key={cert}
+                  onClick={() => toggleCert(cert)}
+                  className={cn(
+                    "px-2.5 py-1 text-xs font-bold rounded-lg border transition-all",
+                    filters.selectedCerts.includes(cert)
+                      ? "bg-amber-600 text-white border-amber-600"
+                      : "bg-stone-50 text-stone-600 border-stone-200 hover:border-amber-400"
+                  )}
+                >
+                  {cert}
+                </button>
+              ))}
+            </div>
+          </div>
+
+          {/* Processing methods */}
+          {processingOptions.length > 0 && (
+            <div>
+              <p className="text-[10px] font-black text-stone-400 uppercase tracking-widest mb-2">Processing Method</p>
+              <div className="flex flex-wrap gap-1.5">
+                {processingOptions.map(m => (
+                  <button
+                    key={m}
+                    onClick={() => toggleProcessing(m)}
+                    className={cn(
+                      "px-2.5 py-1 text-xs font-bold rounded-lg border transition-all",
+                      filters.selectedProcessing.includes(m)
+                        ? "bg-stone-900 text-white border-stone-900"
+                        : "bg-stone-50 text-stone-600 border-stone-200 hover:border-stone-400"
+                    )}
+                  >
+                    {m}
+                  </button>
+                ))}
+              </div>
+            </div>
+          )}
+
+          {/* Altitude range */}
+          <div>
+            <p className="text-[10px] font-black text-stone-400 uppercase tracking-widest mb-2">Altitude (m)</p>
+            <div className="flex items-center gap-2">
+              <input
+                type="number"
+                value={filters.altMin}
+                onChange={e => onChange({ altMin: e.target.value })}
+                placeholder="Min"
+                className="w-full px-3 py-1.5 text-sm border border-stone-200 rounded-lg focus:outline-none focus:ring-2 focus:ring-amber-500"
+              />
+              <span className="text-stone-400 text-xs">–</span>
+              <input
+                type="number"
+                value={filters.altMax}
+                onChange={e => onChange({ altMax: e.target.value })}
+                placeholder="Max"
+                className="w-full px-3 py-1.5 text-sm border border-stone-200 rounded-lg focus:outline-none focus:ring-2 focus:ring-amber-500"
+              />
+            </div>
+          </div>
+
+          {/* Min cupping score */}
+          <div>
+            <p className="text-[10px] font-black text-stone-400 uppercase tracking-widest mb-2">Min Cupping Score</p>
+            <input
+              type="number"
+              value={filters.minScore}
+              onChange={e => onChange({ minScore: e.target.value })}
+              placeholder="e.g. 84"
+              min={0}
+              max={100}
+              className="w-full px-3 py-1.5 text-sm border border-stone-200 rounded-lg focus:outline-none focus:ring-2 focus:ring-amber-500"
+            />
+          </div>
+
+          {/* BoC participant toggle */}
+          <div className="flex items-center justify-between">
+            <div>
+              <p className="text-xs font-bold text-stone-700">Best of Congo participants only</p>
+              <p className="text-[10px] text-stone-400">Filter to competition-verified coops</p>
+            </div>
+            <button
+              onClick={() => onChange({ bocOnly: !filters.bocOnly })}
+              className={cn(
+                "relative w-10 h-6 rounded-full transition-colors",
+                filters.bocOnly ? "bg-amber-600" : "bg-stone-200"
+              )}
+            >
+              <span className={cn(
+                "absolute top-1 w-4 h-4 bg-white rounded-full shadow transition-transform",
+                filters.bocOnly ? "translate-x-5" : "translate-x-1"
+              )} />
+            </button>
+          </div>
+        </div>
+      )}
+    </div>
+  );
+}
+
 function AppContent() {
   const { t } = useTranslation();
   const [selectedCoopId, setSelectedCoopId] = useState<string | null>(null);
@@ -1944,6 +2144,39 @@ function AppContent() {
   const [cooperatives, setCooperatives] = useState<CoffeeCooperative[]>(
     import.meta.env.DEV ? MOCK_COOPERATIVES : []
   );
+
+  const [facetFilters, setFacetFilters] = useState<FacetFilters>({
+    searchQuery: '',
+    selectedCerts: [],
+    selectedProcessing: [],
+    altMin: '',
+    altMax: '',
+    minScore: '',
+    bocOnly: false,
+  });
+
+  const processingOptions = useMemo(() =>
+    Array.from(new Set(cooperatives.flatMap(c => c.processingMethods ?? []))).sort(),
+    [cooperatives]
+  );
+
+  const filteredCoops = useMemo(() => {
+    const { searchQuery, selectedCerts, selectedProcessing, altMin, altMax, minScore, bocOnly } = facetFilters;
+    const altMinN = altMin !== '' ? Number(altMin) : null;
+    const altMaxN = altMax !== '' ? Number(altMax) : null;
+    const minScoreN = minScore !== '' ? Number(minScore) : null;
+
+    return cooperatives.filter(c => {
+      if (searchQuery && !c.name.toLowerCase().includes(searchQuery.toLowerCase())) return false;
+      if (selectedCerts.length > 0 && !selectedCerts.every(cert => c.certifications?.includes(cert))) return false;
+      if (selectedProcessing.length > 0 && !selectedProcessing.some(m => c.processingMethods?.includes(m))) return false;
+      if (altMinN !== null && c.altitudeRange && c.altitudeRange[1] < altMinN) return false;
+      if (altMaxN !== null && c.altitudeRange && c.altitudeRange[0] > altMaxN) return false;
+      if (minScoreN !== null && (c.selfReportedCuppingScore ?? 0) < minScoreN) return false;
+      if (bocOnly && !c.isBocParticipant) return false;
+      return true;
+    });
+  }, [cooperatives, facetFilters]);
 
   useEffect(() => {
     const unsubscribe = onAuthStateChanged(auth, async (u) => {
@@ -2213,10 +2446,10 @@ function AppContent() {
           <div className="grid grid-cols-1 lg:grid-cols-12 gap-8">
             {/* Sidebar List */}
             <div className="lg:col-span-4 space-y-4">
-              <div className="flex items-center justify-between mb-4">
+              <div className="flex items-center justify-between mb-3">
                 <p className="text-xs font-black text-stone-400 uppercase tracking-widest">{t('cooperatives')}</p>
                 {userProfile?.role === 'admin' && (
-                  <button 
+                  <button
                     onClick={() => {
                       setPortalCoopId(null);
                       setCurrentView('portal');
@@ -2228,8 +2461,22 @@ function AppContent() {
                   </button>
                 )}
               </div>
+
+              <FacetedFilterPanel
+                filters={facetFilters}
+                onChange={partial => setFacetFilters(prev => ({ ...prev, ...partial }))}
+                processingOptions={processingOptions}
+                totalCount={cooperatives.length}
+                filteredCount={filteredCoops.length}
+              />
+
               <div className="space-y-3">
-                {cooperatives.map((coop) => (
+                {filteredCoops.length === 0 ? (
+                  <div className="text-center py-8 text-stone-400 text-sm">
+                    No cooperatives match the current filters.
+                  </div>
+                ) : null}
+                {filteredCoops.map((coop) => (
                   <motion.div
                     key={coop.id}
                     whileHover={{ x: 4 }}
