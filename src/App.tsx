@@ -11,7 +11,7 @@ import {
   Plus, Upload, LogIn, LogOut, Shield, User as UserIcon, Loader2, Check, Search, Filter, Download, Edit, Trash2
 } from 'lucide-react';
 import { motion, AnimatePresence } from 'motion/react';
-import { MOCK_COOPERATIVES, CoffeeCooperative, EditionParticipant } from './types';
+import { MOCK_COOPERATIVES, CoffeeCooperative, EditionParticipant, BestOfCongoEdition } from './types';
 import { cn } from './lib/utils';
 import { auth, db } from './firebase';
 import { onAuthStateChanged, signInWithPopup, GoogleAuthProvider, signOut, User as FirebaseUser } from 'firebase/auth';
@@ -73,6 +73,30 @@ class ErrorBoundary extends React.Component<{ children: React.ReactNode }, { has
 
     return this.props.children;
   }
+}
+
+// --- CSV helpers ---
+
+function escapeCsvCell(value: unknown): string {
+  const str = String(value ?? '');
+  if (str.includes('"') || str.includes(',') || str.includes('\n')) {
+    return `"${str.replace(/"/g, '""')}"`;
+  }
+  return str;
+}
+
+function downloadCsv(rows: unknown[][], filename: string) {
+  const content = rows.map(row => row.map(escapeCsvCell).join(',')).join('\n');
+  const blob = new Blob([content], { type: 'text/csv;charset=utf-8;' });
+  const url = URL.createObjectURL(blob);
+  const link = document.createElement('a');
+  link.setAttribute('href', url);
+  link.setAttribute('download', filename);
+  link.style.visibility = 'hidden';
+  document.body.appendChild(link);
+  link.click();
+  document.body.removeChild(link);
+  URL.revokeObjectURL(url);
 }
 
 // --- Components ---
@@ -230,20 +254,7 @@ const ComparisonView = ({ selectedIds, onRemove, onAdd, cooperatives }: { select
       ['Country', ...selectedCoops.map(c => c.country)]
     ];
 
-    const csvContent = [
-      headers.join(','),
-      ...rows.map(row => row.map(cell => `"${cell}"`).join(','))
-    ].join('\n');
-
-    const blob = new Blob([csvContent], { type: 'text/csv;charset=utf-8;' });
-    const link = document.createElement('a');
-    const url = URL.createObjectURL(blob);
-    link.setAttribute('href', url);
-    link.setAttribute('download', `cooperative_comparison_${new Date().toISOString().split('T')[0]}.csv`);
-    link.style.visibility = 'hidden';
-    document.body.appendChild(link);
-    link.click();
-    document.body.removeChild(link);
+    downloadCsv([headers, ...rows], `cooperative_comparison_${new Date().toISOString().split('T')[0]}.csv`);
   };
 
   return (
@@ -1578,6 +1589,212 @@ function BocEditionAdmin({ cooperatives }: { cooperatives: CoffeeCooperative[] }
   );
 }
 
+// --- BoC Leaderboard ---
+
+type RankedParticipant = EditionParticipant & { coopName: string; rank: number };
+
+function BocLeaderboard({ onCoopSelect }: { onCoopSelect: (coopId: string) => void }) {
+  const [editions, setEditions] = useState<BestOfCongoEdition[]>([]);
+  const [selectedYear, setSelectedYear] = useState<number | null>(null);
+  const [ranked, setRanked] = useState<RankedParticipant[]>([]);
+  const [loadingEditions, setLoadingEditions] = useState(true);
+  const [loadingParticipants, setLoadingParticipants] = useState(false);
+
+  useEffect(() => {
+    getDocs(collection(db, 'bestofcongo_editions'))
+      .then(snap => {
+        const eds = snap.docs
+          .map(d => d.data() as BestOfCongoEdition)
+          .sort((a, b) => b.year - a.year);
+        setEditions(eds);
+        if (eds.length > 0) setSelectedYear(eds[0].year);
+      })
+      .catch(err => handleFirestoreError(err, OperationType.LIST, 'bestofcongo_editions'))
+      .finally(() => setLoadingEditions(false));
+  }, []);
+
+  useEffect(() => {
+    if (!selectedYear) return;
+    setLoadingParticipants(true);
+    getDocs(collection(db, 'bestofcongo_editions', String(selectedYear), 'participants'))
+      .then(snap => {
+        const sorted = snap.docs
+          .map(d => d.data() as EditionParticipant & { coopName: string })
+          .sort((a, b) =>
+            b.scores.average - a.scores.average ||
+            (a.coopName ?? '').localeCompare(b.coopName ?? '')
+          )
+          .map((p, i) => ({ ...p, rank: i + 1 }));
+        setRanked(sorted);
+      })
+      .catch(err => handleFirestoreError(err, OperationType.LIST, `bestofcongo_editions/${selectedYear}/participants`))
+      .finally(() => setLoadingParticipants(false));
+  }, [selectedYear]);
+
+  const handleExport = () => {
+    if (!selectedYear || ranked.length === 0) return;
+    downloadCsv(
+      [
+        ['Rank', 'Cooperative', 'Avg Score', 'Qty Submitted (kg)', 'Qty Sold (kg)', 'Buyers'],
+        ...ranked.map(p => [
+          p.rank,
+          p.coopName,
+          p.scores.average,
+          p.qtySubmitted,
+          p.qtySold,
+          p.buyers.map(b => b.name).join('; '),
+        ]),
+      ],
+      `boc_leaderboard_${selectedYear}.csv`
+    );
+  };
+
+  if (loadingEditions) {
+    return <div className="p-12 text-center"><Loader2 className="animate-spin mx-auto text-amber-600" /></div>;
+  }
+
+  if (editions.length === 0) {
+    return (
+      <div className="max-w-4xl mx-auto p-6">
+        <div className="bg-white border border-stone-200 rounded-2xl p-12 text-center">
+          <div className="w-14 h-14 bg-stone-100 rounded-full flex items-center justify-center mx-auto mb-4 text-stone-300">
+            <Award size={28} />
+          </div>
+          <p className="font-bold text-stone-900">No editions yet</p>
+          <p className="text-stone-500 text-sm mt-1">An admin needs to create the first Best of Congo edition.</p>
+        </div>
+      </div>
+    );
+  }
+
+  return (
+    <div className="max-w-5xl mx-auto p-6 space-y-8">
+      {/* Header */}
+      <div className="flex items-center justify-between">
+        <div>
+          <p className="text-xs font-black text-stone-400 uppercase tracking-widest mb-1">Congo Agri Platform</p>
+          <h2 className="text-3xl font-black text-stone-900 tracking-tight">Best of Congo</h2>
+          <p className="text-stone-500 text-sm mt-1">Annual specialty coffee competition — verified jury scores</p>
+        </div>
+        <button
+          onClick={handleExport}
+          disabled={ranked.length === 0}
+          className="flex items-center gap-2 px-4 py-2 bg-stone-900 text-white rounded-xl text-sm font-bold hover:bg-stone-800 transition-all disabled:opacity-40"
+        >
+          <Download size={14} />
+          Export CSV
+        </button>
+      </div>
+
+      {/* Edition selector — tabs for ≤5 editions */}
+      {editions.length <= 5 ? (
+        <div className="flex gap-1 border-b border-stone-200">
+          {editions.map(e => (
+            <button
+              key={e.year}
+              onClick={() => setSelectedYear(e.year)}
+              className={cn(
+                "px-5 py-2.5 text-sm font-bold border-b-2 -mb-px transition-all",
+                selectedYear === e.year
+                  ? "border-amber-600 text-amber-700"
+                  : "border-transparent text-stone-400 hover:text-stone-700"
+              )}
+            >
+              {e.year}
+            </button>
+          ))}
+        </div>
+      ) : (
+        <select
+          value={selectedYear ?? ''}
+          onChange={e => setSelectedYear(Number(e.target.value))}
+          className="px-4 py-2 border border-stone-200 rounded-xl text-sm font-bold focus:outline-none focus:ring-2 focus:ring-amber-500"
+        >
+          {editions.map(e => <option key={e.year} value={e.year}>{e.year}</option>)}
+        </select>
+      )}
+
+      {/* Leaderboard */}
+      {loadingParticipants ? (
+        <div className="p-12 text-center"><Loader2 className="animate-spin mx-auto text-amber-600" /></div>
+      ) : ranked.length === 0 ? (
+        <div className="bg-white border border-stone-200 rounded-2xl p-10 text-center text-stone-400 text-sm">
+          No participants recorded for {selectedYear}.
+        </div>
+      ) : (
+        <div className="bg-white rounded-3xl border border-stone-200 shadow-sm overflow-hidden">
+          <table className="w-full text-sm">
+            <thead>
+              <tr className="bg-stone-50 border-b border-stone-100">
+                <th className="px-4 py-3 text-left text-xs font-black text-stone-400 uppercase tracking-widest w-12">#</th>
+                <th className="px-4 py-3 text-left text-xs font-black text-stone-400 uppercase tracking-widest">Cooperative</th>
+                <th className="px-4 py-3 text-left text-xs font-black text-stone-400 uppercase tracking-widest">Avg Score</th>
+                <th className="px-4 py-3 text-left text-xs font-black text-stone-400 uppercase tracking-widest">Submitted (kg)</th>
+                <th className="px-4 py-3 text-left text-xs font-black text-stone-400 uppercase tracking-widest">Sold (kg)</th>
+                <th className="px-4 py-3 text-left text-xs font-black text-stone-400 uppercase tracking-widest">Buyers</th>
+              </tr>
+            </thead>
+            <tbody>
+              {ranked.map(p => (
+                <tr
+                  key={p.coopId}
+                  onClick={() => onCoopSelect(p.coopId)}
+                  className="border-b border-stone-50 hover:bg-amber-50 cursor-pointer transition-colors group"
+                >
+                  <td className="px-4 py-3">
+                    <span className={cn(
+                      "inline-flex items-center justify-center w-7 h-7 rounded-full text-xs font-black",
+                      p.rank === 1 ? "bg-amber-400 text-white" :
+                      p.rank === 2 ? "bg-stone-300 text-stone-800" :
+                      p.rank === 3 ? "bg-amber-700 text-white" :
+                      "bg-stone-100 text-stone-500"
+                    )}>
+                      {p.rank}
+                    </span>
+                  </td>
+                  <td className="px-4 py-3 font-bold text-stone-900 group-hover:text-amber-700 transition-colors">
+                    {p.coopName}
+                  </td>
+                  <td className="px-4 py-3">
+                    <span className="font-bold text-amber-700 text-base">{p.scores.average}</span>
+                    <span className="text-xs text-stone-400 ml-1">pts</span>
+                  </td>
+                  <td className="px-4 py-3 text-stone-600">{p.qtySubmitted.toLocaleString()}</td>
+                  <td className="px-4 py-3 text-stone-600">{p.qtySold.toLocaleString()}</td>
+                  <td className="px-4 py-3">
+                    <div className="flex flex-wrap gap-1">
+                      {p.buyers.length === 0 ? (
+                        <span className="text-stone-300">—</span>
+                      ) : (
+                        p.buyers.map((b, i) => (
+                          b.logoUrl ? (
+                            <img
+                              key={i}
+                              src={b.logoUrl}
+                              alt={b.name}
+                              title={b.name}
+                              className="h-6 w-auto max-w-[80px] object-contain rounded"
+                              onError={onLogoError}
+                            />
+                          ) : (
+                            <span key={i} className="px-2 py-0.5 bg-stone-100 text-stone-700 text-xs rounded-md">
+                              {b.name}
+                            </span>
+                          )
+                        ))
+                      )}
+                    </div>
+                  </td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+      )}
+    </div>
+  );
+}
+
 // --- BoC History Tab ---
 
 function BocHistoryTab({ coopId }: { coopId: string }) {
@@ -1718,7 +1935,7 @@ function AppContent() {
   const [detailTab, setDetailTab] = useState<'overview' | 'boc-history'>('overview');
   const [comparisonIds, setComparisonIds] = useState<string[]>([]);
   const [isProfileModalOpen, setIsProfileModalOpen] = useState(false);
-  const [currentView, setCurrentView] = useState<'directory' | 'comparison' | 'staging' | 'portal' | 'boc-admin'>('directory');
+  const [currentView, setCurrentView] = useState<'directory' | 'comparison' | 'staging' | 'portal' | 'boc-admin' | 'leaderboard'>('directory');
   const [hoveredCoopId, setHoveredCoopId] = useState<string | null>(null);
   const [user, setUser] = useState<FirebaseUser | null>(null);
   const [userProfile, setUserProfile] = useState<any>(null);
@@ -1840,7 +2057,7 @@ function AppContent() {
               >
                 {t('directory')}
               </button>
-              <button 
+              <button
                 onClick={() => { setCurrentView('comparison'); setPortalCoopId(null); }}
                 className={cn(
                   "px-4 py-2 rounded-full text-sm font-bold transition-all flex items-center gap-2",
@@ -1853,6 +2070,16 @@ function AppContent() {
                     {comparisonIds.length}
                   </span>
                 )}
+              </button>
+              <button
+                onClick={() => { setCurrentView('leaderboard'); setPortalCoopId(null); }}
+                className={cn(
+                  "px-4 py-2 rounded-full text-sm font-bold transition-all flex items-center gap-2",
+                  currentView === 'leaderboard' ? "bg-stone-100 text-stone-900" : "text-stone-500 hover:text-stone-900"
+                )}
+              >
+                <Award size={14} />
+                Best of Congo
               </button>
               {userProfile?.role === 'admin' && (
                 <button
@@ -1960,6 +2187,13 @@ function AppContent() {
           </motion.div>
         ) : currentView === 'staging' ? (
           <StagingArea />
+        ) : currentView === 'leaderboard' ? (
+          <BocLeaderboard
+            onCoopSelect={(coopId) => {
+              setSelectedCoopId(coopId);
+              setCurrentView('directory');
+            }}
+          />
         ) : currentView === 'boc-admin' ? (
           <BocEditionAdmin cooperatives={cooperatives} />
         ) : currentView === 'portal' ? (
@@ -2142,27 +2376,21 @@ function AppContent() {
                         </div>
                         <button 
                           onClick={() => {
-                            const csvContent = [
-                              [t('metric'), 'Value'],
-                              ['Name', selectedCoop.name],
-                              ['Country', selectedCoop.country],
-                              ['Region', selectedCoop.region],
-                              [t('established'), selectedCoop.established],
-                              [t('members'), selectedCoop.members],
-                              [t('cuppingScore'), selectedCoop.selfReportedCuppingScore],
-                              [t('production'), selectedCoop.annualProduction],
-                              [t('description'), selectedCoop.description]
-                            ].map(row => row.join(',')).join('\n');
-                            
-                            const blob = new Blob([csvContent], { type: 'text/csv;charset=utf-8;' });
-                            const link = document.createElement('a');
-                            const url = URL.createObjectURL(blob);
-                            link.setAttribute('href', url);
-                            link.setAttribute('download', `${selectedCoop.name.replace(/\s+/g, '_')}_report.csv`);
-                            link.style.visibility = 'hidden';
-                            document.body.appendChild(link);
-                            link.click();
-                            document.body.removeChild(link);
+                            const safeFilename = selectedCoop.name.replace(/[^a-zA-Z0-9_-]/g, '_');
+                            downloadCsv(
+                              [
+                                [t('metric'), 'Value'],
+                                ['Name', selectedCoop.name],
+                                ['Country', selectedCoop.country],
+                                ['Region', selectedCoop.region],
+                                [t('established'), selectedCoop.established],
+                                [t('members'), selectedCoop.members],
+                                [t('cuppingScore'), selectedCoop.selfReportedCuppingScore],
+                                [t('production'), selectedCoop.annualProduction],
+                                [t('description'), selectedCoop.description],
+                              ],
+                              `${safeFilename}_report.csv`
+                            );
                           }}
                           className="px-4 py-2 bg-white/10 backdrop-blur-md border border-white/20 rounded-xl text-xs font-bold text-white hover:bg-white/20 transition-all flex items-center gap-2"
                         >
