@@ -5,10 +5,10 @@ import {
   Cell, LineChart, Line
 } from 'recharts';
 import { 
-  Coffee, Users, MapPin, Calendar, Award, 
+  Coffee, Users, MapPin, Calendar, Award,
   TrendingUp, Leaf, Scale, ChevronRight, X,
   ArrowLeftRight, Info, DollarSign, Globe, Languages,
-  Plus, Upload, LogIn, LogOut, Shield, User as UserIcon, Loader2, Check, Search, Filter, Download, Edit, Trash2
+  Plus, Upload, LogIn, LogOut, Shield, User as UserIcon, Loader2, Check, Search, Filter, Download, Edit, Trash2, Mail
 } from 'lucide-react';
 import { motion, AnimatePresence } from 'motion/react';
 import { MOCK_COOPERATIVES, CoffeeCooperative, EditionParticipant, BestOfCongoEdition } from './types';
@@ -2621,28 +2621,36 @@ function AppContent() {
                             </div>
                           )}
                         </div>
-                        <button 
-                          onClick={() => {
-                            const safeFilename = selectedCoop.name.replace(/[^a-zA-Z0-9_-]/g, '_');
-                            downloadCsv(
-                              [
-                                [t('metric'), 'Value'],
-                                ['Name', selectedCoop.name],
-                                ['Country', selectedCoop.country],
-                                ['Region', selectedCoop.region],
-                                [t('established'), selectedCoop.established],
-                                [t('members'), selectedCoop.members],
-                                [t('cuppingScore'), selectedCoop.selfReportedCuppingScore],
-                                [t('production'), selectedCoop.annualProduction],
-                                [t('description'), selectedCoop.description],
-                              ],
-                              `${safeFilename}_report.csv`
-                            );
-                          }}
-                          className="px-4 py-2 bg-white/10 backdrop-blur-md border border-white/20 rounded-xl text-xs font-bold text-white hover:bg-white/20 transition-all flex items-center gap-2"
-                        >
-                          <Award size={14} /> {t('downloadReport')}
-                        </button>
+                        <div className="flex flex-col gap-2 items-end">
+                          <a
+                            href={`mailto:${selectedCoop.managerEmail || ADMIN_EMAIL}?subject=${encodeURIComponent(`Inquiry about ${selectedCoop.name}`)}`}
+                            className="px-4 py-2 bg-amber-500/90 backdrop-blur-md border border-amber-400/30 rounded-xl text-xs font-bold text-white hover:bg-amber-500 transition-all flex items-center gap-2"
+                          >
+                            <Mail size={14} /> Contact
+                          </a>
+                          <button
+                            onClick={() => {
+                              const safeFilename = selectedCoop.name.replace(/[^a-zA-Z0-9_-]/g, '_');
+                              downloadCsv(
+                                [
+                                  [t('metric'), 'Value'],
+                                  ['Name', selectedCoop.name],
+                                  ['Country', selectedCoop.country],
+                                  ['Region', selectedCoop.region],
+                                  [t('established'), selectedCoop.established],
+                                  [t('members'), selectedCoop.members],
+                                  [t('cuppingScore'), selectedCoop.selfReportedCuppingScore],
+                                  [t('production'), selectedCoop.annualProduction],
+                                  [t('description'), selectedCoop.description],
+                                ],
+                                `${safeFilename}_report.csv`
+                              );
+                            }}
+                            className="px-4 py-2 bg-white/10 backdrop-blur-md border border-white/20 rounded-xl text-xs font-bold text-white hover:bg-white/20 transition-all flex items-center gap-2"
+                          >
+                            <Award size={14} /> {t('downloadReport')}
+                          </button>
+                        </div>
                       </div>
                     </div>
 
