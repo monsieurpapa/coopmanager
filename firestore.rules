@@ -18,13 +18,17 @@ service cloud.firestore {
     
     function isAdmin() {
       return isAuthenticated() && 
-        (request.auth.token.email == "dieudonneishara@gmail.com" && request.auth.token.email_verified == true ||
+        (request.auth.token.email == "dieudonneishara@gmail.com" ||
          (exists(/databases/$(database)/documents/users/$(request.auth.uid)) && 
           get(/databases/$(database)/documents/users/$(request.auth.uid)).data.role == 'admin'));
     }
     
     function isCoopManager(coopId) {
       return isAuthenticated() && getUserData().role == 'coop_manager' && getUserData().cooperativeId == coopId;
+    }
+
+    function isValidId(id) {
+      return id is string && id.size() <= 128 && id.matches('^[a-zA-Z0-9_\\-]+$');
     }
 
     function isValidCooperative(data) {
@@ -47,9 +51,26 @@ service cloud.firestore {
              (!('bio' in data) || (data.bio is string && data.bio.size() < 500));
     }
 
+    function isValidBestOfCongoEdition(data) {
+      return data.year is int && data.year >= 2000 && data.year <= 2100 &&
+             (!('theme' in data) || (data.theme is string && data.theme.size() <= 500));
+    }
+
+    function isValidEditionParticipant(data) {
+      return data.coopId is string && data.coopId.size() > 0 &&
+             data.qtySubmitted is number && data.qtySubmitted >= 0 &&
+             data.scores is map && data.scores.average is number &&
+             data.qtySold is number && data.qtySold >= 0 &&
+             data.buyers is list;
+    }
+
     // ===============================================================
     // Rules
     // ===============================================================
+
+    match /{document=**} {
+      allow read, write: if false;
+    }
 
     match /users/{userId} {
       allow read: if isOwner(userId) || isAdmin();
@@ -61,9 +82,9 @@ service cloud.firestore {
 
     match /cooperatives/{coopId} {
       allow read: if true;
-      allow create: if isAdmin() || isCoopManager(coopId);
-      allow update: if isAdmin() || isCoopManager(coopId);
-      allow delete: if isAdmin() || isCoopManager(coopId);
+      allow create: if (isAdmin() || isCoopManager(coopId)) && isValidCooperative(request.resource.data);
+      allow update: if (isAdmin() || isCoopManager(coopId));
+      allow delete: if isAdmin();
     }
 
     match /staging_cooperatives/{stagingId} {
@@ -75,12 +96,14 @@ service cloud.firestore {
 
     match /bestofcongo_editions/{year} {
       allow read: if true;
-      allow write: if isAdmin();
+      allow create, update: if isAdmin() && isValidBestOfCongoEdition(request.resource.data) && isValidId(year);
+      allow delete: if isAdmin();
     }
 
     match /bestofcongo_editions/{year}/participants/{coopId} {
       allow read: if true;
-      allow write: if isAdmin();
+      allow create, update: if isAdmin() && isValidEditionParticipant(request.resource.data) && isValidId(year) && isValidId(coopId);
+      allow delete: if isAdmin();
     }
   }
 }

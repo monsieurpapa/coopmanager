@@ -1422,19 +1422,19 @@ function UserProfileModal({ isOpen, onClose, profile, user }: { isOpen: boolean,
 
 // --- Best of Congo Admin ---
 
-const BocBuyerSchema = z.object({
-  name: z.string().min(1, 'Buyer name is required'),
-  logoUrl: z.string().url().optional().or(z.literal('')),
+const BocSaleSchema = z.object({
+  buyerName: z.string().optional().or(z.literal('')),
+  buyerLogoUrl: z.string().optional().or(z.literal('')),
+  bagsSold: z.number().min(0, 'Must be ≥ 0'),
+  pricePerLb: z.number().min(0, 'Must be ≥ 0'), // Price in USD per lb
 });
 
 const BocParticipantSchema = z.object({
   coopId: z.string().min(1, 'Select a cooperative'),
   qtySubmitted: z.number().min(0, 'Must be ≥ 0'),
-  scores: z.object({
-    average: z.number().min(0).max(100),
-  }),
-  qtySold: z.number().min(0, 'Must be ≥ 0'),
-  buyers: z.array(BocBuyerSchema),
+  cuppingScore: z.number().min(0, 'Must be ≥ 0').max(100, 'Max 100'),
+  rank: z.number().int().min(0).optional(),
+  sales: z.array(BocSaleSchema),
 });
 
 const BocEditionSchema = z.object({
@@ -1445,7 +1445,7 @@ const BocEditionSchema = z.object({
 
 type BocEditionFormData = z.infer<typeof BocEditionSchema>;
 
-function ParticipantBuyersField({ control, register, participantIndex, errors }: {
+function ParticipantSalesField({ control, register, participantIndex, errors }: {
   control: any;
   register: any;
   participantIndex: number;
@@ -1453,41 +1453,69 @@ function ParticipantBuyersField({ control, register, participantIndex, errors }:
 }) {
   const { fields, append, remove } = useFieldArray({
     control,
-    name: `participants.${participantIndex}.buyers`,
+    name: `participants.${participantIndex}.sales`,
   });
 
   return (
-    <div className="mt-3 space-y-2">
-      <p className="text-xs font-bold text-stone-500 uppercase tracking-widest">Buyers</p>
-      {fields.map((buyerField, bi) => (
-        <div key={buyerField.id} className="flex gap-2 items-start">
-          <input
-            {...register(`participants.${participantIndex}.buyers.${bi}.name`)}
-            placeholder="Buyer name"
-            className="flex-1 px-3 py-1.5 text-sm border border-stone-200 rounded-lg focus:outline-none focus:ring-2 focus:ring-amber-500"
-          />
-          <input
-            {...register(`participants.${participantIndex}.buyers.${bi}.logoUrl`)}
-            placeholder="Logo URL (optional)"
-            className="flex-1 px-3 py-1.5 text-sm border border-stone-200 rounded-lg focus:outline-none focus:ring-2 focus:ring-amber-500"
-          />
-          <button
-            type="button"
-            onClick={() => remove(bi)}
-            className="p-1.5 text-stone-400 hover:text-red-500 transition-colors"
-          >
-            <X size={14} />
-          </button>
+    <div className="mt-4 space-y-3 bg-stone-50 p-4 rounded-2xl border border-stone-200">
+      <div className="flex items-center justify-between">
+        <p className="text-[10px] font-black text-stone-500 uppercase tracking-widest">Detailed sales (60kg bags)</p>
+        <button
+          type="button"
+          onClick={() => append({ buyerName: '', buyerLogoUrl: '', bagsSold: 0, pricePerLb: 0 })}
+          className="flex items-center gap-1 text-[10px] font-black text-amber-700 hover:text-amber-900 uppercase tracking-wider transition-colors"
+        >
+          <Plus size={10} />
+          Add Sale
+        </button>
+      </div>
+      
+      {fields.length > 0 ? (
+        <div className="space-y-2">
+          {fields.map((saleField, si) => (
+            <div key={saleField.id} className="grid grid-cols-12 gap-2 items-end">
+              <div className="col-span-4">
+                <label className="block text-[8px] font-bold text-stone-400 uppercase mb-0.5 ml-1">Buyer</label>
+                <input
+                  {...register(`participants.${participantIndex}.sales.${si}.buyerName`)}
+                  placeholder="Name"
+                  className="w-full px-2 py-1.5 text-xs border border-stone-200 rounded-lg focus:outline-none focus:ring-2 focus:ring-amber-500 bg-white"
+                />
+              </div>
+              <div className="col-span-3">
+                <label className="block text-[8px] font-bold text-stone-400 uppercase mb-0.5 ml-1">Bags</label>
+                <input
+                  type="number"
+                  {...register(`participants.${participantIndex}.sales.${si}.bagsSold`, { valueAsNumber: true })}
+                  placeholder="Qty"
+                  className="w-full px-2 py-1.5 text-xs border border-stone-200 rounded-lg focus:outline-none focus:ring-2 focus:ring-amber-500 bg-white"
+                />
+              </div>
+              <div className="col-span-3">
+                <label className="block text-[8px] font-bold text-stone-400 uppercase mb-0.5 ml-1">$/lb</label>
+                <input
+                  type="number"
+                  step="0.01"
+                  {...register(`participants.${participantIndex}.sales.${si}.pricePerLb`, { valueAsNumber: true })}
+                  placeholder="Price"
+                  className="w-full px-2 py-1.5 text-xs border border-stone-200 rounded-lg focus:outline-none focus:ring-2 focus:ring-amber-500 bg-white"
+                />
+              </div>
+              <div className="col-span-2 flex justify-end">
+                <button
+                  type="button"
+                  onClick={() => remove(si)}
+                  className="p-1.5 text-stone-400 hover:text-red-500 transition-colors"
+                >
+                  <X size={14} />
+                </button>
+              </div>
+            </div>
+          ))}
         </div>
-      ))}
-      <button
-        type="button"
-        onClick={() => append({ name: '', logoUrl: '' })}
-        className="flex items-center gap-1 text-xs font-bold text-amber-700 hover:text-amber-900 transition-colors"
-      >
-        <Plus size={12} />
-        Add buyer
-      </button>
+      ) : (
+        <p className="text-[10px] text-stone-400 italic">No sales recorded yet.</p>
+      )}
     </div>
   );
 }
@@ -1524,10 +1552,10 @@ function BocEditionAdmin({ cooperatives }: { cooperatives: CoffeeCooperative[] }
           theme: editionData.theme || '',
           participants: participants.map(p => ({
             coopId: p.coopId,
-            qtySubmitted: p.qtySubmitted,
-            scores: { average: p.scores.average },
-            qtySold: p.qtySold,
-            buyers: p.buyers || [],
+            qtySubmitted: p.qtySubmitted || 0,
+            cuppingScore: p.cuppingScore || (p as any).scores?.average || 0,
+            rank: p.rank || 0,
+            sales: p.sales || [],
           })),
         });
         toast.success(`Edition ${year} loaded`);
@@ -1563,9 +1591,9 @@ function BocEditionAdmin({ cooperatives }: { cooperatives: CoffeeCooperative[] }
           coopId: p.coopId,
           coopName: coop?.name || '',
           qtySubmitted: p.qtySubmitted,
-          scores: { average: p.scores.average },
-          qtySold: p.qtySold,
-          buyers: p.buyers.filter(b => b.name.trim() !== ''),
+          cuppingScore: p.cuppingScore,
+          rank: p.rank || 0,
+          sales: p.sales.filter(s => s.buyerName && s.buyerName.trim() !== ''),
         });
       });
 
@@ -1639,7 +1667,7 @@ function BocEditionAdmin({ cooperatives }: { cooperatives: CoffeeCooperative[] }
             </h3>
             <button
               type="button"
-              onClick={() => appendParticipant({ coopId: '', qtySubmitted: 0, scores: { average: 0 }, qtySold: 0, buyers: [] })}
+              onClick={() => appendParticipant({ coopId: '', qtySubmitted: 0, cuppingScore: 0, rank: 0, sales: [] })}
               className="flex items-center gap-2 px-3 py-1.5 bg-amber-600 text-white rounded-lg text-sm font-bold hover:bg-amber-700 transition-all"
             >
               <Plus size={14} />
@@ -1664,7 +1692,7 @@ function BocEditionAdmin({ cooperatives }: { cooperatives: CoffeeCooperative[] }
                 </button>
               </div>
 
-              <div className="grid grid-cols-2 gap-3 sm:grid-cols-4">
+              <div className="grid grid-cols-2 gap-3 sm:grid-cols-5">
                 <div className="col-span-2">
                   <label className="block text-xs font-bold text-stone-600 mb-1">Cooperative *</label>
                   <select
@@ -1681,38 +1709,38 @@ function BocEditionAdmin({ cooperatives }: { cooperatives: CoffeeCooperative[] }
                   )}
                 </div>
 
-                <div>
-                  <label className="block text-xs font-bold text-stone-600 mb-1">Avg Score *</label>
+                <div className="col-span-1">
+                  <label className="block text-xs font-bold text-stone-600 mb-1">Rank</label>
                   <input
                     type="number"
-                    step="0.01"
-                    {...register(`participants.${index}.scores.average`, { valueAsNumber: true })}
-                    className="w-full px-3 py-2 text-sm border border-stone-200 rounded-lg focus:outline-none focus:ring-2 focus:ring-amber-500"
+                    {...register(`participants.${index}.rank`, { valueAsNumber: true })}
+                    className="w-full px-3 py-2 text-sm border border-stone-200 rounded-lg focus:outline-none focus:ring-2 focus:ring-amber-500 bg-white"
+                    placeholder="e.g. 1"
                   />
                 </div>
 
-                <div>
-                  <label className="block text-xs font-bold text-stone-600 mb-1">Qty Submitted (kg)</label>
+                <div className="col-span-1">
+                  <label className="block text-xs font-bold text-stone-600 mb-1">Score *</label>
+                  <input
+                    type="number"
+                    step="0.01"
+                    {...register(`participants.${index}.cuppingScore`, { valueAsNumber: true })}
+                    className="w-full px-3 py-2 text-sm border border-stone-200 rounded-lg focus:outline-none focus:ring-2 focus:ring-amber-500 bg-white"
+                  />
+                </div>
+
+                <div className="col-span-1">
+                  <label className="block text-xs font-bold text-stone-600 mb-1">Qty (kg)</label>
                   <input
                     type="number"
                     step="0.01"
                     {...register(`participants.${index}.qtySubmitted`, { valueAsNumber: true })}
-                    className="w-full px-3 py-2 text-sm border border-stone-200 rounded-lg focus:outline-none focus:ring-2 focus:ring-amber-500"
-                  />
-                </div>
-
-                <div>
-                  <label className="block text-xs font-bold text-stone-600 mb-1">Qty Sold (kg)</label>
-                  <input
-                    type="number"
-                    step="0.01"
-                    {...register(`participants.${index}.qtySold`, { valueAsNumber: true })}
-                    className="w-full px-3 py-2 text-sm border border-stone-200 rounded-lg focus:outline-none focus:ring-2 focus:ring-amber-500"
+                    className="w-full px-3 py-2 text-sm border border-stone-200 rounded-lg focus:outline-none focus:ring-2 focus:ring-amber-500 bg-white"
                   />
                 </div>
               </div>
 
-              <ParticipantBuyersField
+              <ParticipantSalesField
                 control={control}
                 register={register}
                 participantIndex={index}

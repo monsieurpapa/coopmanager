@@ -1,20 +1,18 @@
 // --- Best of Congo ---
 
-export interface BocScore {
-  average: number; // admin-entered; no per-city breakdown in v1
-}
-
-export interface BocBuyer {
-  name: string;
-  logoUrl: string;
+export interface BocSale {
+  buyerName: string;
+  buyerLogoUrl?: string;
+  bagsSold: number; // 60kg bags
+  pricePerLb: number; // USD per lb
 }
 
 export interface EditionParticipant {
   coopId: string;       // matches /cooperatives doc ID
   qtySubmitted: number; // kg
-  scores: BocScore;
-  qtySold: number;      // kg
-  buyers: BocBuyer[];
+  cuppingScore: number;
+  rank?: number;
+  sales: BocSale[];
 }
 
 export interface BestOfCongoEdition {
