@@ -6,10 +6,11 @@ import {
 } from 'recharts';
 import { 
   Coffee, Users, MapPin, Calendar, Award,
-  TrendingUp, Leaf, Scale, ChevronRight, ChevronDown, X,
+  TrendingUp, Leaf, Scale, ChevronRight, X,
   ArrowLeftRight, Info, DollarSign, Globe, Languages,
-  Plus, Upload, LogIn, LogOut, Shield, User as UserIcon, Loader2, Check, Search, Filter, Download, Edit, Trash2, Mail, Sun, Moon
+  Plus, Upload, LogIn, LogOut, Shield, User as UserIcon, Loader2, Check, Search, Filter, Download, Edit, Trash2, Mail, Share2, QrCode, Printer
 } from 'lucide-react';
+import { QRCodeSVG } from 'qrcode.react';
 import { motion, AnimatePresence } from 'motion/react';
 import { MOCK_COOPERATIVES, CoffeeCooperative, EditionParticipant, BestOfCongoEdition } from './types';
 import { cn } from './lib/utils';
@@ -78,7 +79,7 @@ class ErrorBoundary extends React.Component<{ children: React.ReactNode }, { has
 // --- Constants ---
 
 const CANONICAL_CERTIFICATIONS = ['Fairtrade', 'Bio-NOP', 'Bio-UE', 'Bio-BRA', 'RainForest Alliance', 'UTZ'];
-const ADMIN_EMAILS = ['dieudonneishara@gmail.com', 'citovictoire2@gmail.com'];
+const ADMIN_EMAIL = 'dieudonneishara@gmail.com';
 
 // --- CSV helpers ---
 
@@ -1289,8 +1290,355 @@ const ProductionTrendChart = ({ data }: { data: any[] }) => (
   </div>
 );
 
+function QrCodeModal({ url, coopName, onClose }: { url: string; coopName: string; onClose: () => void }) {
+  const handleDownload = () => {
+    const svg = document.getElementById('coop-qr-svg');
+    if (!svg) return;
+    const blob = new Blob([svg.outerHTML], { type: 'image/svg+xml' });
+    const a = document.createElement('a');
+    a.href = URL.createObjectURL(blob);
+    a.download = `${coopName.replace(/[^a-zA-Z0-9]/g, '_')}_qrcode.svg`;
+    a.click();
+    URL.revokeObjectURL(a.href);
+  };
+  return (
+    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 p-4" onClick={onClose}>
+      <div className="bg-white rounded-2xl p-8 max-w-xs w-full text-center shadow-2xl" onClick={e => e.stopPropagation()}>
+        <h3 className="text-lg font-black text-stone-900 mb-1">{coopName}</h3>
+        <p className="text-xs text-stone-400 mb-6 uppercase tracking-widest">Scan to view profile</p>
+        <div className="flex justify-center mb-6 p-4 bg-stone-50 rounded-xl">
+          <QRCodeSVG id="coop-qr-svg" value={url} size={180} bgColor="#fafaf9" fgColor="#1c1917" level="M" />
+        </div>
+        <p className="text-[10px] text-stone-400 mb-6 break-all font-mono">{url}</p>
+        <div className="flex gap-3">
+          <button onClick={handleDownload} className="flex-1 flex items-center justify-center gap-1.5 py-2.5 bg-amber-700 text-white rounded-xl text-xs font-bold hover:bg-amber-800 transition-all">
+            <Download size={13} /> Download
+          </button>
+          <button onClick={onClose} className="flex-1 py-2.5 bg-stone-100 text-stone-700 rounded-xl text-xs font-bold hover:bg-stone-200 transition-all">
+            Close
+          </button>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+const RequestSampleSchema = z.object({
+  buyerName: z.string().min(1, 'Required').max(100),
+  company: z.string().min(1, 'Required').max(200),
+  country: z.string().min(1, 'Required').max(100),
+  interest: z.enum(['sample', 'contract', 'info']),
+  quantityKg: z.string().max(50).optional(),
+  message: z.string().max(1000).optional(),
+});
+type RequestSampleData = z.infer<typeof RequestSampleSchema>;
+
+function RequestSampleModal({ coop, onClose }: { coop: CoffeeCooperative; onClose: () => void }) {
+  const [submitting, setSubmitting] = useState(false);
+  const [submitted, setSubmitted] = useState(false);
+  const { register, handleSubmit, formState: { errors } } = useForm<RequestSampleData>({
+    resolver: zodResolver(RequestSampleSchema),
+    defaultValues: { interest: 'sample' },
+  });
+
+  const onSubmit = async (data: RequestSampleData) => {
+    setSubmitting(true);
+    try {
+      await addDoc(collection(db, 'leads'), {
+        coopId: coop.id,
+        coopName: coop.name,
+        ...data,
+        createdAt: serverTimestamp(),
+        status: 'new',
+      });
+      setSubmitted(true);
+    } catch {
+      toast.error('Could not submit. Please use the Contact button to email directly.');
+    } finally {
+      setSubmitting(false);
+    }
+  };
+
+  if (submitted) {
+    return (
+      <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 p-4" onClick={onClose}>
+        <div className="bg-white rounded-2xl p-8 max-w-sm w-full text-center shadow-2xl" onClick={e => e.stopPropagation()}>
+          <div className="w-14 h-14 bg-green-100 rounded-full flex items-center justify-center mx-auto mb-4">
+            <Check size={28} className="text-green-600" />
+          </div>
+          <h3 className="text-lg font-black text-stone-900 mb-2">Request sent!</h3>
+          <p className="text-stone-500 text-sm mb-6">Congo Agri Platform will be in touch within 2 business days.</p>
+          <button onClick={onClose} className="w-full py-3 bg-stone-900 text-white rounded-xl font-bold hover:bg-stone-800 transition-all">Close</button>
+        </div>
+      </div>
+    );
+  }
+
+  return (
+    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 p-4" onClick={onClose}>
+      <div className="bg-white rounded-2xl p-6 max-w-md w-full shadow-2xl" onClick={e => e.stopPropagation()}>
+        <div className="flex items-center justify-between mb-5">
+          <div>
+            <h3 className="text-base font-black text-stone-900">Request Sample</h3>
+            <p className="text-xs text-stone-400 mt-0.5">{coop.name}</p>
+          </div>
+          <button onClick={onClose} className="p-1.5 hover:bg-stone-100 rounded-lg transition-colors"><X size={18} /></button>
+        </div>
+        <form onSubmit={handleSubmit(onSubmit)} className="space-y-4">
+          <div className="grid grid-cols-2 gap-3">
+            <div>
+              <label className="text-[10px] font-black text-stone-400 uppercase tracking-widest mb-1 block">Your Name *</label>
+              <input {...register('buyerName')} className="w-full border border-stone-200 rounded-xl px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-amber-500" />
+              {errors.buyerName && <p className="text-[10px] text-red-500 mt-0.5">{errors.buyerName.message}</p>}
+            </div>
+            <div>
+              <label className="text-[10px] font-black text-stone-400 uppercase tracking-widest mb-1 block">Company *</label>
+              <input {...register('company')} className="w-full border border-stone-200 rounded-xl px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-amber-500" />
+              {errors.company && <p className="text-[10px] text-red-500 mt-0.5">{errors.company.message}</p>}
+            </div>
+          </div>
+          <div className="grid grid-cols-2 gap-3">
+            <div>
+              <label className="text-[10px] font-black text-stone-400 uppercase tracking-widest mb-1 block">Country *</label>
+              <input {...register('country')} className="w-full border border-stone-200 rounded-xl px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-amber-500" />
+              {errors.country && <p className="text-[10px] text-red-500 mt-0.5">{errors.country.message}</p>}
+            </div>
+            <div>
+              <label className="text-[10px] font-black text-stone-400 uppercase tracking-widest mb-1 block">Interest</label>
+              <select {...register('interest')} className="w-full border border-stone-200 rounded-xl px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-amber-500 bg-white">
+                <option value="sample">Sample request</option>
+                <option value="contract">Contract sourcing</option>
+                <option value="info">More information</option>
+              </select>
+            </div>
+          </div>
+          <div>
+            <label className="text-[10px] font-black text-stone-400 uppercase tracking-widest mb-1 block">Quantity (kg, approx.)</label>
+            <input {...register('quantityKg')} placeholder="e.g. 300 kg" className="w-full border border-stone-200 rounded-xl px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-amber-500" />
+          </div>
+          <div>
+            <label className="text-[10px] font-black text-stone-400 uppercase tracking-widest mb-1 block">Message</label>
+            <textarea {...register('message')} rows={3} placeholder="Specific requirements, questions, or context..." className="w-full border border-stone-200 rounded-xl px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-amber-500 resize-none" />
+          </div>
+          <button type="submit" disabled={submitting} className="w-full flex items-center justify-center gap-2 py-3 bg-amber-700 text-white rounded-xl font-bold hover:bg-amber-800 transition-all disabled:opacity-60">
+            {submitting ? <Loader2 size={16} className="animate-spin" /> : <Mail size={16} />}
+            {submitting ? 'Sending...' : 'Send Request'}
+          </button>
+        </form>
+      </div>
+    </div>
+  );
+}
+
+function PublicCoopProfile({ coopId }: { coopId: string }) {
+  const { t } = useTranslation();
+  const [coop, setCoop] = useState<CoffeeCooperative | null>(
+    import.meta.env.DEV ? (MOCK_COOPERATIVES.find(c => c.id === coopId) ?? null) : null
+  );
+  const [loading, setLoading] = useState(!import.meta.env.DEV);
+  const [notFound, setNotFound] = useState(false);
+  const [isQrOpen, setIsQrOpen] = useState(false);
+  const [isSampleOpen, setIsSampleOpen] = useState(false);
+
+  // Inject print styles for clean PDF output
+  useEffect(() => {
+    const style = document.createElement('style');
+    style.id = 'profile-print-styles';
+    style.textContent = `
+      @media print {
+        .print-hide { display: none !important; }
+        body { background: white !important; }
+        @page { margin: 12mm; }
+      }
+    `;
+    document.head.appendChild(style);
+    return () => style.remove();
+  }, []);
+
+  useEffect(() => {
+    if (import.meta.env.DEV && coop) return;
+    getDoc(doc(db, 'cooperatives', coopId))
+      .then(snap => {
+        if (snap.exists()) {
+          setCoop({ id: snap.id, ...snap.data() } as CoffeeCooperative);
+        } else {
+          setNotFound(true);
+        }
+      })
+      .catch(() => setNotFound(true))
+      .finally(() => setLoading(false));
+  }, [coopId]);
+
+  useEffect(() => {
+    if (coop) document.title = `${coop.name} — CongoFarmers`;
+    return () => { document.title = 'CongoFarmers'; };
+  }, [coop]);
+
+  if (loading) {
+    return (
+      <div className="min-h-screen bg-[#faf9f6] flex items-center justify-center">
+        <Loader2 className="animate-spin text-amber-600" size={40} />
+      </div>
+    );
+  }
+
+  if (notFound || !coop) {
+    return (
+      <div className="min-h-screen bg-[#faf9f6] flex items-center justify-center p-6">
+        <div className="text-center max-w-sm">
+          <Coffee size={48} className="text-stone-300 mx-auto mb-4" />
+          <h2 className="text-2xl font-black text-stone-900 mb-2">Profile not found</h2>
+          <p className="text-stone-500 mb-6">This cooperative profile doesn't exist or has been removed.</p>
+          <a href={window.location.pathname} className="inline-flex items-center gap-2 px-6 py-3 bg-amber-900 text-white rounded-xl font-bold hover:bg-amber-800 transition-all">
+            <Coffee size={16} /> View CongoFarmers
+          </a>
+        </div>
+      </div>
+    );
+  }
+
+  const appUrl = window.location.pathname + window.location.search;
+  const profileUrl = `${window.location.origin}${window.location.pathname}#/coop/${encodeURIComponent(coop.id)}`;
+
+  return (
+    <div className="min-h-screen bg-[#faf9f6]">
+      <Toaster position="bottom-right" toastOptions={{ duration: 4000 }} />
+
+      {/* Modals */}
+      {isQrOpen && <QrCodeModal url={profileUrl} coopName={coop.name} onClose={() => setIsQrOpen(false)} />}
+      {isSampleOpen && <RequestSampleModal coop={coop} onClose={() => setIsSampleOpen(false)} />}
+
+      {/* Minimal header — hidden on print */}
+      <header className="print-hide bg-white border-b border-stone-200 px-4 py-3 flex items-center justify-between gap-3">
+        <a href={appUrl} className="flex items-center gap-2 text-stone-900 hover:text-amber-700 transition-colors flex-shrink-0">
+          <div className="w-7 h-7 bg-amber-900 rounded-lg flex items-center justify-center text-white">
+            <Coffee size={15} />
+          </div>
+          <span className="text-base font-black tracking-tighter">CongoFarmers</span>
+        </a>
+        <div className="flex items-center gap-2">
+          <LanguageSwitcher />
+          <button
+            onClick={() => setIsQrOpen(true)}
+            className="flex items-center gap-1.5 px-3 py-1.5 bg-stone-100 text-stone-700 rounded-lg text-xs font-bold hover:bg-stone-200 transition-all"
+          >
+            <QrCode size={13} /> QR Code
+          </button>
+          <a href={appUrl} className="hidden sm:flex items-center gap-1 text-xs font-bold text-stone-400 hover:text-amber-700 transition-colors">
+            Directory <ChevronRight size={13} />
+          </a>
+        </div>
+      </header>
+
+      <div className="max-w-2xl mx-auto px-4 py-8 space-y-6">
+        {/* Hero */}
+        <div className="relative h-56 rounded-2xl overflow-hidden">
+          <img
+            src={coop.imageUrl}
+            alt={coop.name}
+            className="w-full h-full object-cover"
+            referrerPolicy="no-referrer"
+            onError={onImageError}
+          />
+          <div className="absolute inset-0 bg-gradient-to-t from-black/80 via-black/20 to-transparent" />
+          <div className="absolute bottom-0 left-0 p-6 flex items-end gap-4">
+            <img
+              src={coop.logoUrl}
+              alt=""
+              className="w-14 h-14 rounded-xl object-cover border-2 border-white/30 flex-shrink-0"
+              onError={onLogoError}
+            />
+            <div>
+              <h1 className="text-3xl font-black text-white tracking-tight">{coop.name}</h1>
+              <p className="text-white/80 text-sm font-medium flex items-center gap-1 mt-1">
+                <MapPin size={13} /> {coop.region}, {coop.country}
+              </p>
+              {coop.established && (
+                <p className="text-white/60 text-xs mt-0.5 flex items-center gap-1">
+                  <Calendar size={12} /> {t('established')} {coop.established}
+                </p>
+              )}
+            </div>
+          </div>
+        </div>
+
+        {/* Stats */}
+        <div className="grid grid-cols-2 gap-3">
+          <StatCard icon={Users} label={t('members')} value={coop.members.toLocaleString()} />
+          <StatCard icon={Award} label={t('score')} value={coop.selfReportedCuppingScore} />
+          <StatCard icon={Scale} label="Altitude" value={`${coop.altitudeRange[0]}–${coop.altitudeRange[1]}`} unit="m" />
+          <StatCard icon={TrendingUp} label={t('production')} value={coop.annualProduction} unit="T" />
+        </div>
+
+        {/* Certifications */}
+        {coop.certifications && coop.certifications.length > 0 && (
+          <div className="bg-white rounded-2xl border border-stone-200 p-5">
+            <h3 className="text-xs font-black text-stone-400 uppercase tracking-widest mb-3">Certifications</h3>
+            <div className="flex flex-wrap gap-2">
+              {coop.certifications.map(cert => (
+                <span key={cert} className="px-3 py-1 bg-amber-50 border border-amber-200 text-amber-800 rounded-full text-xs font-bold">
+                  {cert}
+                </span>
+              ))}
+            </div>
+          </div>
+        )}
+
+        {/* Description */}
+        {coop.description && (
+          <div className="bg-white rounded-2xl border border-stone-200 p-5">
+            <h3 className="text-xs font-black text-stone-400 uppercase tracking-widest mb-3">About</h3>
+            <p className="text-sm text-stone-600 leading-relaxed">{coop.description}</p>
+          </div>
+        )}
+
+        {/* Sensory profile */}
+        <div className="bg-white rounded-2xl border border-stone-200 p-5">
+          <h3 className="text-xs font-black text-stone-400 uppercase tracking-widest mb-2">Sensory Profile</h3>
+          <SensoryRadar profile={coop.sensoryProfile} name={coop.name} />
+        </div>
+
+        {/* BoC history */}
+        <div className="bg-white rounded-2xl border border-stone-200 p-5">
+          <h3 className="text-xs font-black text-stone-400 uppercase tracking-widest mb-4">Best of Congo History</h3>
+          <BocHistoryTab coopId={coop.id} />
+        </div>
+
+        {/* CTA row — hidden on print */}
+        <div className="print-hide grid grid-cols-2 sm:grid-cols-4 gap-3 pb-8">
+          <button
+            onClick={() => setIsSampleOpen(true)}
+            className="col-span-2 flex items-center justify-center gap-2 py-3 bg-amber-700 text-white rounded-xl font-bold hover:bg-amber-800 transition-all"
+          >
+            <Mail size={16} /> Request Sample
+          </button>
+          <button
+            onClick={() => window.print()}
+            className="flex items-center justify-center gap-2 py-3 bg-stone-100 text-stone-700 rounded-xl font-bold hover:bg-stone-200 transition-all text-sm"
+          >
+            <Printer size={15} /> PDF
+          </button>
+          <a
+            href={appUrl}
+            className="flex items-center justify-center gap-2 py-3 bg-stone-100 text-stone-700 rounded-xl font-bold hover:bg-stone-200 transition-all text-sm"
+          >
+            <Globe size={15} /> Directory
+          </a>
+        </div>
+      </div>
+    </div>
+  );
+}
+
 export default function App() {
-  const [lang, setLang] = useState<Language>('en');
+  const [lang, setLang] = useState<Language>(() => {
+    const bl = navigator.language?.toLowerCase() ?? '';
+    return bl.startsWith('fr') ? 'fr' : 'en';
+  });
+  const [hashCoopId] = useState<string | null>(() => {
+    const m = window.location.hash.match(/^#\/coop\/(.+)$/);
+    return m ? decodeURIComponent(m[1]) : null;
+  });
 
   useEffect(() => {
     async function testConnection() {
@@ -1312,7 +1660,7 @@ export default function App() {
   return (
     <ErrorBoundary>
       <LanguageContext.Provider value={{ lang, setLang, t }}>
-        <AppContent />
+        {hashCoopId ? <PublicCoopProfile coopId={hashCoopId} /> : <AppContent />}
       </LanguageContext.Provider>
     </ErrorBoundary>
   );
@@ -1516,6 +1864,245 @@ function ParticipantSalesField({ control, register, participantIndex, errors }: 
       ) : (
         <p className="text-[10px] text-stone-400 italic">No sales recorded yet.</p>
       )}
+    </div>
+  );
+}
+
+// --- BoC CSV Import ---
+
+interface BocCsvRow {
+  coopId: string;
+  coopName: string;
+  average: number;
+  qtySubmitted: number;
+  qtySold: number;
+  buyers: string[];
+  status: 'ok' | 'unknown_coop' | 'invalid_data';
+  errors: string[];
+}
+
+function parseCSVLine(line: string): string[] {
+  const cells: string[] = [];
+  let inQuote = false;
+  let current = '';
+  for (let i = 0; i < line.length; i++) {
+    const ch = line[i];
+    if (ch === '"') {
+      if (inQuote && line[i + 1] === '"') { current += '"'; i++; }
+      else { inQuote = !inQuote; }
+    } else if (ch === ',' && !inQuote) {
+      cells.push(current); current = '';
+    } else {
+      current += ch;
+    }
+  }
+  cells.push(current);
+  return cells;
+}
+
+function parseBocCsv(text: string, cooperatives: CoffeeCooperative[]): BocCsvRow[] {
+  const lines = text.split(/\r?\n/).filter(l => l.trim() !== '');
+  if (lines.length < 2) return [];
+  const header = lines[0].split(',').map(h => h.trim().toLowerCase().replace(/[^a-z]/g, ''));
+  const col = (name: string) => header.indexOf(name);
+  return lines.slice(1).map(line => {
+    const cells = parseCSVLine(line);
+    const rawCoopId = (cells[col('coopid')] ?? cells[col('coopname')] ?? '').trim();
+    const rawAverage = cells[col('average')] ?? '';
+    const rawQtySubmitted = cells[col('qtysubmitted')] ?? '';
+    const rawQtySold = cells[col('qtysold')] ?? '';
+    const rawBuyers = cells[col('buyers')] ?? '';
+    const errors: string[] = [];
+    const coop =
+      cooperatives.find(c => c.id === rawCoopId) ||
+      cooperatives.find(c => c.name.toLowerCase() === rawCoopId.toLowerCase());
+    if (!coop) errors.push(`Unknown cooperative: "${rawCoopId}"`);
+    const average = parseFloat(rawAverage);
+    const qtySubmitted = parseFloat(rawQtySubmitted);
+    const qtySold = parseFloat(rawQtySold);
+    if (isNaN(average) || average < 0 || average > 100) errors.push(`Invalid score: "${rawAverage}"`);
+    if (isNaN(qtySubmitted) || qtySubmitted < 0) errors.push('Invalid qtySubmitted');
+    if (isNaN(qtySold) || qtySold < 0) errors.push('Invalid qtySold');
+    const buyers = rawBuyers ? rawBuyers.split('|').map(b => b.trim()).filter(Boolean) : [];
+    return {
+      coopId: coop?.id ?? rawCoopId,
+      coopName: coop?.name ?? rawCoopId,
+      average: isNaN(average) ? 0 : average,
+      qtySubmitted: isNaN(qtySubmitted) ? 0 : qtySubmitted,
+      qtySold: isNaN(qtySold) ? 0 : qtySold,
+      buyers,
+      status: (errors.length > 0 ? (coop ? 'invalid_data' : 'unknown_coop') : 'ok') as BocCsvRow['status'],
+      errors,
+    };
+  });
+}
+
+function BocCsvImportModal({
+  cooperatives,
+  onImport,
+  onClose,
+}: {
+  cooperatives: CoffeeCooperative[];
+  onImport: (rows: BocCsvRow[]) => void;
+  onClose: () => void;
+}) {
+  const [rows, setRows] = useState<BocCsvRow[]>([]);
+  const [fileName, setFileName] = useState('');
+
+  const { getRootProps, getInputProps, isDragActive } = useDropzone({
+    accept: { 'text/csv': ['.csv'], 'text/plain': ['.txt', '.csv'] },
+    maxSize: 5 * 1024 * 1024,
+    multiple: false,
+    onDropAccepted: ([file]) => {
+      setFileName(file.name);
+      const reader = new FileReader();
+      reader.onload = e => {
+        const text = e.target?.result as string;
+        setRows(parseBocCsv(text, cooperatives));
+      };
+      reader.readAsText(file);
+    },
+    onDropRejected: () => toast.error('File rejected — must be a CSV under 5 MB'),
+  });
+
+  const handleDownloadTemplate = () => {
+    downloadCsv(
+      [['coopId', 'average', 'qtySubmitted', 'qtySold', 'buyers']],
+      'boc_import_template.csv',
+    );
+  };
+
+  const validRows = rows.filter(r => r.status === 'ok');
+
+  return (
+    <div className="fixed inset-0 bg-black/50 z-50 flex items-center justify-center p-4">
+      <div className="bg-white rounded-3xl shadow-2xl w-full max-w-3xl max-h-[90vh] flex flex-col">
+        {/* Header */}
+        <div className="flex items-center justify-between p-6 border-b border-stone-100">
+          <div>
+            <h3 className="text-lg font-black text-stone-900">Import Participants from CSV</h3>
+            <p className="text-xs text-stone-500 mt-0.5">
+              Columns: <code className="bg-stone-100 px-1 rounded">coopId</code>,{' '}
+              <code className="bg-stone-100 px-1 rounded">average</code>,{' '}
+              <code className="bg-stone-100 px-1 rounded">qtySubmitted</code>,{' '}
+              <code className="bg-stone-100 px-1 rounded">qtySold</code>,{' '}
+              <code className="bg-stone-100 px-1 rounded">buyers</code> (pipe-separated)
+            </p>
+          </div>
+          <button onClick={onClose} className="p-2 hover:bg-stone-100 rounded-xl transition-colors">
+            <X size={18} className="text-stone-500" />
+          </button>
+        </div>
+
+        <div className="flex-1 overflow-y-auto p-6 space-y-4">
+          {/* Drop zone */}
+          <div
+            {...getRootProps()}
+            className={cn(
+              'border-2 border-dashed rounded-2xl p-8 text-center cursor-pointer transition-all',
+              isDragActive ? 'border-amber-500 bg-amber-50' : 'border-stone-200 hover:border-amber-400 hover:bg-stone-50',
+            )}
+          >
+            <input {...getInputProps()} />
+            <Upload size={32} className="mx-auto mb-3 text-stone-400" />
+            {fileName ? (
+              <p className="font-bold text-stone-700">{fileName}</p>
+            ) : (
+              <>
+                <p className="font-bold text-stone-700">Drop a CSV file here, or click to browse</p>
+                <p className="text-xs text-stone-400 mt-1">Max 5 MB</p>
+              </>
+            )}
+          </div>
+
+          <button
+            type="button"
+            onClick={handleDownloadTemplate}
+            className="flex items-center gap-2 text-xs font-bold text-amber-700 hover:text-amber-900 transition-colors"
+          >
+            <Download size={13} />
+            Download template CSV
+          </button>
+
+          {/* Preview table */}
+          {rows.length > 0 && (
+            <div className="rounded-2xl border border-stone-200 overflow-hidden">
+              <table className="w-full text-xs">
+                <thead className="bg-stone-50 border-b border-stone-200">
+                  <tr>
+                    <th className="px-3 py-2 text-left font-bold text-stone-600">Coop</th>
+                    <th className="px-3 py-2 text-right font-bold text-stone-600">Score</th>
+                    <th className="px-3 py-2 text-right font-bold text-stone-600">Submitted (kg)</th>
+                    <th className="px-3 py-2 text-right font-bold text-stone-600">Sold (kg)</th>
+                    <th className="px-3 py-2 text-left font-bold text-stone-600">Buyers</th>
+                    <th className="px-3 py-2 text-left font-bold text-stone-600">Status</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {rows.map((row, i) => (
+                    <tr
+                      key={i}
+                      className={cn(
+                        'border-b border-stone-100 last:border-0',
+                        row.status === 'ok' ? 'bg-green-50' : 'bg-red-50',
+                      )}
+                    >
+                      <td className="px-3 py-2 font-medium text-stone-800">{row.coopName}</td>
+                      <td className="px-3 py-2 text-right text-stone-700">{row.average}</td>
+                      <td className="px-3 py-2 text-right text-stone-700">{row.qtySubmitted}</td>
+                      <td className="px-3 py-2 text-right text-stone-700">{row.qtySold}</td>
+                      <td className="px-3 py-2 text-stone-600">{row.buyers.join(', ') || '—'}</td>
+                      <td className="px-3 py-2">
+                        {row.status === 'ok' ? (
+                          <span className="inline-flex items-center gap-1 text-green-700 font-bold">
+                            <Check size={11} /> OK
+                          </span>
+                        ) : (
+                          <span className="inline-flex items-center gap-1 text-red-600 font-bold" title={row.errors.join('; ')}>
+                            <AlertCircle size={11} /> {row.status === 'unknown_coop' ? 'Unknown coop' : 'Invalid data'}
+                          </span>
+                        )}
+                      </td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          )}
+        </div>
+
+        {/* Footer */}
+        <div className="flex items-center justify-between p-6 border-t border-stone-100">
+          <p className="text-xs text-stone-500">
+            {rows.length > 0 && (
+              <>
+                <span className="text-green-700 font-bold">{validRows.length} valid</span>
+                {rows.length - validRows.length > 0 && (
+                  <>, <span className="text-red-600 font-bold">{rows.length - validRows.length} error{rows.length - validRows.length !== 1 ? 's' : ''}</span></>
+                )}
+              </>
+            )}
+          </p>
+          <div className="flex gap-3">
+            <button
+              type="button"
+              onClick={onClose}
+              className="px-4 py-2 text-sm font-bold text-stone-600 hover:bg-stone-100 rounded-xl transition-colors"
+            >
+              Cancel
+            </button>
+            <button
+              type="button"
+              disabled={validRows.length === 0}
+              onClick={() => { onImport(validRows); onClose(); }}
+              className="flex items-center gap-2 px-5 py-2 bg-amber-600 text-white rounded-xl text-sm font-bold hover:bg-amber-700 transition-all disabled:opacity-40"
+            >
+              <Upload size={14} />
+              Import {validRows.length > 0 ? `${validRows.length} row${validRows.length !== 1 ? 's' : ''}` : ''}
+            </button>
+          </div>
+        </div>
+      </div>
     </div>
   );
 }
@@ -1795,9 +2382,17 @@ function BocLeaderboard({ onCoopSelect }: { onCoopSelect: (coopId: string) => vo
     getDocs(collection(db, 'bestofcongo_editions', String(selectedYear), 'participants'))
       .then(snap => {
         const sorted = snap.docs
-          .map(d => d.data() as EditionParticipant & { coopName: string })
+          .map(d => {
+            const raw = d.data() as any;
+            // Normalize old-model docs (scores.average → cuppingScore, buyers → sales)
+            return {
+              ...raw,
+              cuppingScore: raw.cuppingScore ?? raw.scores?.average ?? 0,
+              sales: raw.sales ?? [],
+            } as EditionParticipant & { coopName: string };
+          })
           .sort((a, b) =>
-            (b.cuppingScore || 0) - (a.cuppingScore || 0) ||
+            b.cuppingScore - a.cuppingScore ||
             (a.coopName ?? '').localeCompare(b.coopName ?? '')
           )
           .map((p, i) => ({ ...p, rank: i + 1 }));
@@ -1811,14 +2406,14 @@ function BocLeaderboard({ onCoopSelect }: { onCoopSelect: (coopId: string) => vo
     if (!selectedYear || ranked.length === 0) return;
     downloadCsv(
       [
-        ['Rank', 'Cooperative', 'Cupping Score', 'Qty Submitted (kg)', 'Total Qty Sold (kg)', 'Sales Details'],
+        ['Rank', 'Cooperative', 'Cupping Score', 'Qty Submitted (kg)', 'Qty Sold (bags)', 'Buyers'],
         ...ranked.map(p => [
           p.rank,
           p.coopName,
           p.cuppingScore,
           p.qtySubmitted,
-          p.sales.reduce((sum, s) => sum + (s.bagsSold * 60), 0),
-          p.sales.map(s => `${s.buyerName}: ${s.bagsSold} bags @ $${s.pricePerLb}/lb`).join('; '),
+          p.sales.reduce((sum, s) => sum + (s.bagsSold ?? 0), 0),
+          p.sales.filter(s => s.buyerName).map(s => s.buyerName).join('; '),
         ]),
       ],
       `boc_leaderboard_${selectedYear}.csv`
@@ -1904,80 +2499,68 @@ function BocLeaderboard({ onCoopSelect }: { onCoopSelect: (coopId: string) => vo
               <tr className="bg-stone-50 border-b border-stone-100">
                 <th className="px-4 py-3 text-left text-xs font-black text-stone-400 uppercase tracking-widest w-12">#</th>
                 <th className="px-4 py-3 text-left text-xs font-black text-stone-400 uppercase tracking-widest">Cooperative</th>
-                <th className="px-4 py-3 text-left text-xs font-black text-stone-400 uppercase tracking-widest">Cupping Score</th>
+                <th className="px-4 py-3 text-left text-xs font-black text-stone-400 uppercase tracking-widest">Avg Score</th>
                 <th className="px-4 py-3 text-left text-xs font-black text-stone-400 uppercase tracking-widest">Submitted (kg)</th>
-                <th className="px-4 py-3 text-left text-xs font-black text-stone-400 uppercase tracking-widest">Sold (bags)</th>
+                <th className="px-4 py-3 text-left text-xs font-black text-stone-400 uppercase tracking-widest">Sold (kg)</th>
                 <th className="px-4 py-3 text-left text-xs font-black text-stone-400 uppercase tracking-widest">Buyers</th>
               </tr>
             </thead>
             <tbody>
-              {ranked.map(p => {
-                const totalBags = (p.sales || []).reduce((sum, s) => sum + (s.bagsSold || 0), 0);
-                return (
-                  <tr
-                    key={p.coopId}
-                    onClick={() => onCoopSelect(p.coopId)}
-                    className="border-b border-stone-50 dark:border-stone-800 hover:bg-stone-50 dark:hover:bg-stone-800/50 cursor-pointer transition-colors group"
-                  >
-                    <td className="px-4 py-3">
-                      <span className={cn(
-                        "inline-flex items-center justify-center w-7 h-7 rounded-full text-xs font-black",
-                        p.rank === 1 ? "bg-amber-400 text-white" :
-                        p.rank === 2 ? "bg-stone-300 text-stone-800" :
-                        p.rank === 3 ? "bg-amber-700 text-white" :
-                        "bg-stone-100 dark:bg-stone-800 text-stone-500"
-                      )}>
-                        {p.rank}
-                      </span>
-                    </td>
-                    <td className="px-4 py-3 font-bold text-stone-900 dark:text-stone-100 group-hover:text-amber-700 transition-colors">
-                      {p.coopName}
-                    </td>
-                    <td className="px-4 py-3">
-                      <div className="flex items-baseline gap-1">
-                        <span className="font-bold text-amber-700 dark:text-amber-500 text-base">{p.cuppingScore}</span>
-                        <span className="text-[10px] text-stone-400 uppercase font-black tracking-tighter">pts</span>
-                      </div>
-                    </td>
-                    <td className="px-4 py-3 text-stone-600 dark:text-stone-400 font-medium">{p.qtySubmitted?.toLocaleString()}</td>
-                    <td className="px-4 py-3">
-                      {totalBags > 0 ? (
-                        <span className="bg-amber-50 dark:bg-amber-900/20 text-amber-900 dark:text-amber-200 px-2 py-0.5 rounded-full text-[11px] font-black border border-amber-100 dark:border-amber-800/30 italic">
-                          {totalBags} bags
-                        </span>
-                      ) : (
+              {ranked.map(p => (
+                <tr
+                  key={p.coopId}
+                  onClick={() => onCoopSelect(p.coopId)}
+                  className="border-b border-stone-50 hover:bg-amber-50 cursor-pointer transition-colors group"
+                >
+                  <td className="px-4 py-3">
+                    <span className={cn(
+                      "inline-flex items-center justify-center w-7 h-7 rounded-full text-xs font-black",
+                      p.rank === 1 ? "bg-amber-400 text-white" :
+                      p.rank === 2 ? "bg-stone-300 text-stone-800" :
+                      p.rank === 3 ? "bg-amber-700 text-white" :
+                      "bg-stone-100 text-stone-500"
+                    )}>
+                      {p.rank}
+                    </span>
+                  </td>
+                  <td className="px-4 py-3 font-bold text-stone-900 group-hover:text-amber-700 transition-colors">
+                    {p.coopName}
+                  </td>
+                  <td className="px-4 py-3">
+                    <span className="font-bold text-amber-700 text-base">{p.cuppingScore}</span>
+                    <span className="text-xs text-stone-400 ml-1">pts</span>
+                  </td>
+                  <td className="px-4 py-3 text-stone-600">{p.qtySubmitted.toLocaleString()}</td>
+                  <td className="px-4 py-3 text-stone-600">
+                    {p.sales.reduce((sum, s) => sum + (s.bagsSold ?? 0), 0).toLocaleString()}
+                    <span className="text-xs text-stone-400 ml-1">bags</span>
+                  </td>
+                  <td className="px-4 py-3">
+                    <div className="flex flex-wrap gap-1">
+                      {p.sales.filter(s => s.buyerName).length === 0 ? (
                         <span className="text-stone-300">—</span>
+                      ) : (
+                        p.sales.filter(s => s.buyerName).map((s, i) => (
+                          s.buyerLogoUrl ? (
+                            <img
+                              key={i}
+                              src={s.buyerLogoUrl}
+                              alt={s.buyerName}
+                              title={s.buyerName}
+                              className="h-6 w-auto max-w-[80px] object-contain rounded"
+                              onError={onLogoError}
+                            />
+                          ) : (
+                            <span key={i} className="px-2 py-0.5 bg-stone-100 text-stone-700 text-xs rounded-md">
+                              {s.buyerName}
+                            </span>
+                          )
+                        ))
                       )}
-                    </td>
-                    <td className="px-4 py-3">
-                      <div className="flex flex-wrap gap-1">
-                        {(!p.sales || p.sales.length === 0) ? (
-                          <span className="text-stone-300">—</span>
-                        ) : (
-                          p.sales.map((s, i) => (
-                            <div key={i} className="flex items-center gap-1.5 bg-stone-50 dark:bg-stone-800/40 px-2 py-1 rounded-lg border border-stone-100 dark:border-stone-800">
-                              {s.buyerLogoUrl ? (
-                                <img
-                                  src={s.buyerLogoUrl}
-                                  alt={s.buyerName}
-                                  className="w-4 h-4 object-contain rounded-sm"
-                                  referrerPolicy="no-referrer"
-                                />
-                              ) : (
-                                <div className="w-1.5 h-1.5 rounded-full bg-stone-300 dark:bg-stone-600" />
-                              )}
-                              <div className="flex flex-col leading-none">
-                                <span className="text-[10px] font-bold text-stone-700 dark:text-stone-300 max-w-[80px] truncate">{s.buyerName}</span>
-                                {s.pricePerLb > 0 && <span className="text-[8px] font-black text-amber-600">${s.pricePerLb}/lb</span>}
-                              </div>
-                            </div>
-                          ))
-                        )}
-                      </div>
-                    </td>
-                  </tr>
-                );
-              })}
+                    </div>
+                  </td>
+                </tr>
+              ))}
             </tbody>
           </table>
         </div>
@@ -2002,10 +2585,18 @@ function BocHistoryTab({ coopId }: { coopId: string }) {
       query(collectionGroup(db, 'participants'), where('coopId', '==', coopId))
     )
       .then(snap => {
-        const results = snap.docs.map(d => ({
-          year: parseInt(d.ref.parent.parent?.id ?? '0', 10),
-          participant: d.data() as EditionParticipant,
-        }));
+        const results = snap.docs.map(d => {
+          const raw = d.data() as any;
+          return {
+            year: parseInt(d.ref.parent.parent?.id ?? '0', 10),
+            participant: {
+              ...raw,
+              // Normalize old-model documents
+              cuppingScore: raw.cuppingScore ?? raw.scores?.average ?? 0,
+              sales: raw.sales ?? [],
+            } as EditionParticipant,
+          };
+        });
         results.sort((a, b) => a.year - b.year);
         setRows(results);
       })
@@ -2062,7 +2653,7 @@ function BocHistoryTab({ coopId }: { coopId: string }) {
             <XAxis dataKey="year" tick={{ fontSize: 12 }} />
             <YAxis domain={['auto', 'auto']} tick={{ fontSize: 12 }} />
             <Tooltip
-              formatter={(value) => [`${value ?? '—'} pts`, 'Cupping Score']}
+              formatter={(value) => [`${value ?? '—'} pts`, 'Avg Score']}
               labelFormatter={(label) => `${label}`}
             />
             <Line
@@ -2078,85 +2669,43 @@ function BocHistoryTab({ coopId }: { coopId: string }) {
       </div>
 
       {/* Year-by-year table */}
-      <div className="bg-white rounded-2xl border border-stone-200 shadow-sm overflow-hidden overflow-x-auto">
+      <div className="bg-white rounded-2xl border border-stone-200 shadow-sm overflow-hidden">
         <table className="w-full text-sm">
           <thead>
             <tr className="bg-stone-50 border-b border-stone-100">
-              <th className="px-4 py-3 text-left text-xs font-black text-stone-400 uppercase tracking-widest w-12">Year</th>
-              <th className="px-4 py-3 text-left text-xs font-black text-stone-400 uppercase tracking-widest w-12 text-center">Rank</th>
-              <th className="px-4 py-3 text-left text-xs font-black text-stone-400 uppercase tracking-widest">Cupping Score</th>
+              <th className="px-4 py-3 text-left text-xs font-black text-stone-400 uppercase tracking-widest">Year</th>
+              <th className="px-4 py-3 text-left text-xs font-black text-stone-400 uppercase tracking-widest">Score</th>
               <th className="px-4 py-3 text-left text-xs font-black text-stone-400 uppercase tracking-widest">Submitted (kg)</th>
               <th className="px-4 py-3 text-left text-xs font-black text-stone-400 uppercase tracking-widest">Sold (bags)</th>
               <th className="px-4 py-3 text-left text-xs font-black text-stone-400 uppercase tracking-widest">Buyers</th>
             </tr>
           </thead>
           <tbody>
-            {rows.map(({ year, participant }) => {
-              const totalBags = (participant.sales || []).reduce((sum, s) => sum + (s.bagsSold || 0), 0);
-              return (
-                <tr key={year} className="border-b border-stone-50 hover:bg-stone-50/50 transition-colors group">
-                  <td className="px-4 py-3 font-black text-stone-900">{year}</td>
-                  <td className="px-4 py-3 text-center">
-                    {participant.rank ? (
-                      <span className={cn(
-                        "inline-flex items-center justify-center w-6 h-6 rounded-full text-[10px] font-black",
-                        participant.rank === 1 ? "bg-amber-400 text-white shadow-sm" :
-                        participant.rank === 2 ? "bg-stone-300 text-stone-800" :
-                        participant.rank === 3 ? "bg-amber-700 text-white" :
-                        "bg-stone-100 text-stone-500"
-                      )}>
-                        {participant.rank}
-                      </span>
+            {rows.map(({ year, participant }) => (
+              <tr key={year} className="border-b border-stone-50 hover:bg-stone-50 transition-colors">
+                <td className="px-4 py-3 font-bold text-stone-900">{year}</td>
+                <td className="px-4 py-3">
+                  <span className="font-bold text-amber-700">{participant.cuppingScore} pts</span>
+                </td>
+                <td className="px-4 py-3 text-stone-600">{participant.qtySubmitted.toLocaleString()}</td>
+                <td className="px-4 py-3 text-stone-600">
+                  {participant.sales.reduce((sum, s) => sum + (s.bagsSold ?? 0), 0).toLocaleString()}
+                </td>
+                <td className="px-4 py-3">
+                  <div className="flex flex-wrap gap-1">
+                    {participant.sales.filter(s => s.buyerName).length === 0 ? (
+                      <span className="text-stone-400">—</span>
                     ) : (
-                      <span className="text-stone-300">—</span>
+                      participant.sales.filter(s => s.buyerName).map((s, i) => (
+                        <span key={i} className="px-2 py-0.5 bg-stone-100 text-stone-700 text-xs rounded-md">
+                          {s.buyerName}
+                        </span>
+                      ))
                     )}
-                  </td>
-                  <td className="px-4 py-3">
-                    <div className="flex items-baseline gap-1">
-                      <span className="font-bold text-amber-700 text-base">{participant.cuppingScore}</span>
-                      <span className="text-[10px] text-stone-400 uppercase font-black tracking-tighter">pts</span>
-                    </div>
-                  </td>
-                  <td className="px-4 py-3 text-stone-600 font-medium">{participant.qtySubmitted?.toLocaleString()}</td>
-                  <td className="px-4 py-3">
-                    {totalBags > 0 ? (
-                      <span className="bg-amber-50 dark:bg-amber-900/20 text-amber-900 dark:text-amber-200 px-2 py-0.5 rounded-full text-[11px] font-black border border-amber-100 dark:border-amber-800/30 italic">
-                        {totalBags} bags
-                      </span>
-                    ) : (
-                      <span className="text-stone-300">—</span>
-                    )}
-                  </td>
-                  <td className="px-4 py-3">
-                    <div className="flex flex-wrap gap-1">
-                      {(!participant.sales || participant.sales.length === 0) ? (
-                        <span className="text-stone-300">—</span>
-                      ) : (
-                        participant.sales.map((s, i) => (
-                          <div key={i} className="flex items-center gap-1.5 bg-stone-50 dark:bg-stone-800/40 px-2 py-1 rounded-lg border border-stone-100 dark:border-stone-800">
-                            {s.buyerLogoUrl ? (
-                              <img
-                                src={s.buyerLogoUrl}
-                                alt={s.buyerName}
-                                className="w-4 h-4 object-contain rounded-sm"
-                                referrerPolicy="no-referrer"
-                                onError={onLogoError}
-                              />
-                            ) : (
-                              <div className="w-1.5 h-1.5 rounded-full bg-stone-300 dark:bg-stone-600" />
-                            )}
-                            <div className="flex flex-col leading-none">
-                              <span className="text-[10px] font-bold text-stone-700 dark:text-stone-300 max-w-[80px] truncate">{s.buyerName}</span>
-                              {s.pricePerLb > 0 && <span className="text-[8px] font-black text-amber-600">${s.pricePerLb}/lb</span>}
-                            </div>
-                          </div>
-                        ))
-                      )}
-                    </div>
-                  </td>
-                </tr>
-              );
-            })}
+                  </div>
+                </td>
+              </tr>
+            ))}
           </tbody>
         </table>
       </div>
@@ -2454,36 +3003,6 @@ function AppContent() {
   const [userProfile, setUserProfile] = useState<any>(null);
   const [isProfileLoading, setIsProfileLoading] = useState(true);
   const [portalCoopId, setPortalCoopId] = useState<string | null>(null);
-  const [isAdminDropdownOpen, setIsAdminDropdownOpen] = useState(false);
-  const adminDropdownRef = useRef<HTMLDivElement>(null);
-  const [theme, setTheme] = useState<'light' | 'dark'>(() => {
-    if (typeof window !== 'undefined') {
-      const saved = localStorage.getItem('theme');
-      if (saved === 'dark' || saved === 'light') return saved;
-      return window.matchMedia('(prefers-color-scheme: dark)').matches ? 'dark' : 'light';
-    }
-    return 'light';
-  });
-
-  useEffect(() => {
-    const root = window.document.documentElement;
-    if (theme === 'dark') {
-      root.classList.add('dark');
-    } else {
-      root.classList.remove('dark');
-    }
-    localStorage.setItem('theme', theme);
-  }, [theme]);
-
-  useEffect(() => {
-    function handleClickOutside(event: MouseEvent) {
-      if (adminDropdownRef.current && !adminDropdownRef.current.contains(event.target as Node)) {
-        setIsAdminDropdownOpen(false);
-      }
-    }
-    document.addEventListener("mousedown", handleClickOutside);
-    return () => document.removeEventListener("mousedown", handleClickOutside);
-  }, []);
   const [cooperatives, setCooperatives] = useState<CoffeeCooperative[]>(
     import.meta.env.DEV ? MOCK_COOPERATIVES : []
   );
@@ -2535,8 +3054,8 @@ function AppContent() {
           await setDoc(docRef, profile);
         }
         
-        // Force admin role for the hardcoded admin emails
-        if (u.email && ADMIN_EMAILS.includes(u.email)) {
+        // Force admin role for the hardcoded admin email
+        if (u.email === "dieudonneishara@gmail.com") {
           profile.role = 'admin';
         }
 
@@ -2603,6 +3122,14 @@ function AppContent() {
 
   useEffect(() => { setDetailTab('overview'); }, [selectedCoopId]);
 
+  useEffect(() => {
+    if (selectedCoopId) {
+      history.replaceState(null, '', `#/coop/${encodeURIComponent(selectedCoopId)}`);
+    } else if (window.location.hash.startsWith('#/coop/')) {
+      history.replaceState(null, '', window.location.pathname + window.location.search);
+    }
+  }, [selectedCoopId]);
+
   const toggleComparison = (id: string) => {
     setComparisonIds(prev => 
       prev.includes(id) ? prev.filter(i => i !== id) : [...prev, id].slice(-4)
@@ -2610,18 +3137,18 @@ function AppContent() {
   };
 
   return (
-    <div className="min-h-screen bg-[#faf9f6] dark:bg-[#0c0a09] text-stone-900 dark:text-stone-50 font-sans selection:bg-amber-100 selection:dark:bg-amber-900/30 transition-colors duration-300">
+    <div className="min-h-screen bg-[#faf9f6] text-stone-900 font-sans selection:bg-amber-100">
       <Toaster position="bottom-right" toastOptions={{ duration: 4000 }} />
       <HowItWorksModal open={isAboutOpen} onClose={() => setIsAboutOpen(false)} />
       {/* Header */}
-      <header className="sticky top-0 z-40 bg-white/80 dark:bg-stone-900/80 backdrop-blur-md border-b border-stone-200 dark:border-stone-800">
+      <header className="sticky top-0 z-40 bg-white/80 backdrop-blur-md border-b border-stone-200">
         <div className="max-w-7xl mx-auto px-4 h-16 flex items-center justify-between">
           <div className="flex items-center gap-8">
             <div className="flex items-center gap-2 cursor-pointer" onClick={() => setCurrentView('directory')}>
               <div className="w-8 h-8 bg-amber-900 rounded-lg flex items-center justify-center text-white">
                 <Coffee size={18} />
               </div>
-              <h1 className="text-xl font-black tracking-tighter text-stone-900 dark:text-stone-50">CongoFarmers</h1>
+              <h1 className="text-xl font-black tracking-tighter text-stone-900">CongoFarmers</h1>
             </div>
 
             <nav className="hidden md:flex items-center gap-1">
@@ -2629,7 +3156,7 @@ function AppContent() {
                 onClick={() => { setCurrentView('directory'); setPortalCoopId(null); }}
                 className={cn(
                   "px-4 py-2 rounded-full text-sm font-bold transition-all",
-                  currentView === 'directory' ? "bg-stone-100 dark:bg-stone-800 text-stone-900 dark:text-stone-50" : "text-stone-500 dark:text-stone-400 hover:text-stone-900 dark:hover:text-stone-200"
+                  currentView === 'directory' ? "bg-stone-100 text-stone-900" : "text-stone-500 hover:text-stone-900"
                 )}
               >
                 {t('directory')}
@@ -2638,7 +3165,7 @@ function AppContent() {
                 onClick={() => { setCurrentView('comparison'); setPortalCoopId(null); }}
                 className={cn(
                   "px-4 py-2 rounded-full text-sm font-bold transition-all flex items-center gap-2",
-                  currentView === 'comparison' ? "bg-stone-100 dark:bg-stone-800 text-stone-900 dark:text-stone-50" : "text-stone-500 dark:text-stone-400 hover:text-stone-900 dark:hover:text-stone-200"
+                  currentView === 'comparison' ? "bg-stone-100 text-stone-900" : "text-stone-500 hover:text-stone-900"
                 )}
               >
                 {t('comparison')}
@@ -2652,7 +3179,7 @@ function AppContent() {
                 onClick={() => { setCurrentView('leaderboard'); setPortalCoopId(null); }}
                 className={cn(
                   "px-4 py-2 rounded-full text-sm font-bold transition-all flex items-center gap-2",
-                  currentView === 'leaderboard' ? "bg-stone-100 dark:bg-stone-800 text-stone-900 dark:text-stone-50" : "text-stone-500 dark:text-stone-400 hover:text-stone-900 dark:hover:text-stone-200"
+                  currentView === 'leaderboard' ? "bg-stone-100 text-stone-900" : "text-stone-500 hover:text-stone-900"
                 )}
               >
                 <Award size={14} />
@@ -2666,60 +3193,28 @@ function AppContent() {
                 {t('about')}
               </button>
               {userProfile?.role === 'admin' && (
-                <div className="relative" ref={adminDropdownRef}>
-                  <button
-                    onClick={() => setIsAdminDropdownOpen(!isAdminDropdownOpen)}
-                    className={cn(
-                      "px-4 py-2 rounded-full text-sm font-bold transition-all flex items-center gap-2",
-                      (currentView === 'staging' || currentView === 'boc-admin') ? "bg-stone-100 dark:bg-stone-800 text-stone-900 dark:text-stone-50" : "text-stone-500 dark:text-stone-400 hover:text-stone-900 dark:hover:text-stone-200"
-                    )}
-                  >
-                    <Shield size={14} />
-                    {t('admin')}
-                    <ChevronDown size={12} className={cn("transition-transform duration-200", isAdminDropdownOpen && "rotate-180")} />
-                  </button>
-                  <AnimatePresence>
-                    {isAdminDropdownOpen && (
-                      <motion.div
-                        initial={{ opacity: 0, y: 8, scale: 0.95 }}
-                        animate={{ opacity: 1, y: 4, scale: 1 }}
-                        exit={{ opacity: 0, y: 8, scale: 0.95 }}
-                        className="absolute top-full left-0 mt-2 w-56 bg-white dark:bg-stone-900 border border-stone-200 dark:border-stone-800 rounded-3xl shadow-xl z-50 py-2 ring-1 ring-stone-900/5 overflow-hidden"
-                      >
-                        <button
-                          onClick={() => { setCurrentView('staging'); setPortalCoopId(null); setIsAdminDropdownOpen(false); }}
-                          className={cn(
-                            "w-full text-left px-5 py-3 text-sm font-bold transition-colors flex items-center gap-3",
-                            currentView === 'staging' ? "bg-stone-100 dark:bg-stone-800 text-stone-900 dark:text-stone-50" : "text-stone-500 dark:text-stone-400 hover:bg-stone-50 dark:hover:bg-stone-800/50 hover:text-stone-900 dark:hover:text-stone-200"
-                          )}
-                        >
-                          <div className="w-8 h-8 rounded-xl bg-blue-50 text-blue-600 flex items-center justify-center">
-                            <Plus size={16} />
-                          </div>
-                          <div>
-                            <p className="block">Review Uploads</p>
-                            <p className="text-[10px] font-medium text-stone-400">AI Staging Area</p>
-                          </div>
-                        </button>
-                        <button
-                          onClick={() => { setCurrentView('boc-admin'); setPortalCoopId(null); setIsAdminDropdownOpen(false); }}
-                          className={cn(
-                            "w-full text-left px-5 py-3 text-sm font-bold transition-colors flex items-center gap-3",
-                            currentView === 'boc-admin' ? "bg-stone-100 dark:bg-stone-800 text-stone-900 dark:text-stone-50" : "text-stone-500 dark:text-stone-400 hover:bg-stone-50 dark:hover:bg-stone-800/50 hover:text-stone-900 dark:hover:text-stone-200"
-                          )}
-                        >
-                          <div className="w-8 h-8 rounded-xl bg-amber-50 text-amber-600 flex items-center justify-center">
-                            <Award size={16} />
-                          </div>
-                          <div>
-                            <p className="block">BoC Results</p>
-                            <p className="text-[10px] font-medium text-stone-400">Manage Editions</p>
-                          </div>
-                        </button>
-                      </motion.div>
-                    )}
-                  </AnimatePresence>
-                </div>
+                <button
+                  onClick={() => { setCurrentView('staging'); setPortalCoopId(null); }}
+                  className={cn(
+                    "px-4 py-2 rounded-full text-sm font-bold transition-all flex items-center gap-2",
+                    currentView === 'staging' ? "bg-stone-100 text-stone-900" : "text-stone-500 hover:text-stone-900"
+                  )}
+                >
+                  <Shield size={14} />
+                  {t('stagingArea')}
+                </button>
+              )}
+              {userProfile?.role === 'admin' && (
+                <button
+                  onClick={() => { setCurrentView('boc-admin'); setPortalCoopId(null); }}
+                  className={cn(
+                    "px-4 py-2 rounded-full text-sm font-bold transition-all flex items-center gap-2",
+                    currentView === 'boc-admin' ? "bg-stone-100 text-stone-900" : "text-stone-500 hover:text-stone-900"
+                  )}
+                >
+                  <Award size={14} />
+                  BoC Admin
+                </button>
               )}
               {userProfile?.cooperativeId && (
                 <button 
@@ -2737,13 +3232,6 @@ function AppContent() {
           </div>
 
           <div className="flex items-center gap-4">
-            <button
-              onClick={() => setTheme(prev => prev === 'light' ? 'dark' : 'light')}
-              className="p-2 w-10 h-10 flex items-center justify-center rounded-xl bg-stone-100 dark:bg-stone-800 text-stone-500 dark:text-stone-400 hover:bg-stone-200 dark:hover:bg-stone-700 transition-all"
-              title={theme === 'light' ? 'Switch to Dark Mode' : 'Switch to Light Mode'}
-            >
-              {theme === 'light' ? <Moon size={18} /> : <Sun size={18} />}
-            </button>
             <LanguageSwitcher />
             {user ? (
               <div className="flex items-center gap-3">
@@ -2751,7 +3239,7 @@ function AppContent() {
                   className="text-right hidden sm:block cursor-pointer hover:opacity-80 transition-opacity"
                   onClick={() => setIsProfileModalOpen(true)}
                 >
-                  <p className="text-xs font-black text-stone-900 dark:text-stone-50 leading-none">{userProfile?.displayName || user.displayName}</p>
+                  <p className="text-xs font-black text-stone-900 leading-none">{userProfile?.displayName || user.displayName}</p>
                   <p className="text-[10px] font-bold text-stone-400 uppercase tracking-widest">{userProfile?.role}</p>
                 </div>
                 <button 
@@ -3013,11 +3501,20 @@ function AppContent() {
                         </div>
                         <div className="flex flex-col gap-2 items-end">
                           <a
-                            href={`mailto:${selectedCoop.managerEmail || ADMIN_EMAILS[0]}?subject=${encodeURIComponent(`Inquiry about ${selectedCoop.name}`)}`}
+                            href={`mailto:${selectedCoop.managerEmail || ADMIN_EMAIL}?subject=${encodeURIComponent(`Inquiry about ${selectedCoop.name}`)}`}
                             className="px-4 py-2 bg-amber-500/90 backdrop-blur-md border border-amber-400/30 rounded-xl text-xs font-bold text-white hover:bg-amber-500 transition-all flex items-center gap-2"
                           >
                             <Mail size={14} /> Contact
                           </a>
+                          <button
+                            onClick={() => {
+                              const url = `${window.location.origin}${window.location.pathname}#/coop/${encodeURIComponent(selectedCoop.id)}`;
+                              navigator.clipboard.writeText(url).then(() => toast.success('Profile link copied!')).catch(() => toast.error('Could not copy link'));
+                            }}
+                            className="px-4 py-2 bg-white/10 backdrop-blur-md border border-white/20 rounded-xl text-xs font-bold text-white hover:bg-white/20 transition-all flex items-center gap-2"
+                          >
+                            <Share2 size={14} /> Share Profile
+                          </button>
                           <button
                             onClick={() => {
                               const safeFilename = selectedCoop.name.replace(/[^a-zA-Z0-9_-]/g, '_');
