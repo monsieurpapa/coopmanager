@@ -22,13 +22,9 @@ WORKDIR /usr/share/nginx/html
 # Copy built assets from builder
 COPY --from=builder /app/dist .
 
-# Copy nginx config (PORT_PLACEHOLDER is replaced at container startup)
+# Copy nginx config — listens on 8080 (set PORT=8080 in Railway variables)
 COPY nginx.conf /etc/nginx/conf.d/default.conf
-
-# Entrypoint script substitutes $PORT into the nginx config then starts nginx
-COPY docker-entrypoint.sh /docker-entrypoint.sh
-RUN chmod +x /docker-entrypoint.sh
 
 EXPOSE 8080
 
-ENTRYPOINT ["/docker-entrypoint.sh"]
+CMD ["nginx", "-g", "daemon off;"]
