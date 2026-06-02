@@ -105,5 +105,15 @@ service cloud.firestore {
       allow create, update: if isAdmin() && isValidEditionParticipant(request.resource.data) && isValidId(year) && isValidId(coopId);
       allow delete: if isAdmin();
     }
+
+    match /leads/{leadId} {
+      allow create: if request.resource.data.buyerName is string &&
+                       request.resource.data.buyerName.size() > 0 &&
+                       request.resource.data.buyerName.size() < 100 &&
+                       request.resource.data.company is string &&
+                       request.resource.data.company.size() > 0 &&
+                       request.resource.data.coopId is string;
+      allow read, update, delete: if isAdmin();
+    }
   }
 }

@@ -8,8 +8,9 @@ import {
   Coffee, Users, MapPin, Calendar, Award,
   TrendingUp, Leaf, Scale, ChevronRight, X,
   ArrowLeftRight, Info, DollarSign, Globe, Languages,
-  Plus, Upload, LogIn, LogOut, Shield, User as UserIcon, Loader2, Check, Search, Filter, Download, Edit, Trash2, Mail
+  Plus, Upload, LogIn, LogOut, Shield, User as UserIcon, Loader2, Check, Search, Filter, Download, Edit, Trash2, Mail, Share2, QrCode, Printer
 } from 'lucide-react';
+import { QRCodeSVG } from 'qrcode.react';
 import { motion, AnimatePresence } from 'motion/react';
 import { MOCK_COOPERATIVES, CoffeeCooperative, EditionParticipant, BestOfCongoEdition } from './types';
 import { cn } from './lib/utils';
@@ -1289,8 +1290,355 @@ const ProductionTrendChart = ({ data }: { data: any[] }) => (
   </div>
 );
 
+function QrCodeModal({ url, coopName, onClose }: { url: string; coopName: string; onClose: () => void }) {
+  const handleDownload = () => {
+    const svg = document.getElementById('coop-qr-svg');
+    if (!svg) return;
+    const blob = new Blob([svg.outerHTML], { type: 'image/svg+xml' });
+    const a = document.createElement('a');
+    a.href = URL.createObjectURL(blob);
+    a.download = `${coopName.replace(/[^a-zA-Z0-9]/g, '_')}_qrcode.svg`;
+    a.click();
+    URL.revokeObjectURL(a.href);
+  };
+  return (
+    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 p-4" onClick={onClose}>
+      <div className="bg-white rounded-2xl p-8 max-w-xs w-full text-center shadow-2xl" onClick={e => e.stopPropagation()}>
+        <h3 className="text-lg font-black text-stone-900 mb-1">{coopName}</h3>
+        <p className="text-xs text-stone-400 mb-6 uppercase tracking-widest">Scan to view profile</p>
+        <div className="flex justify-center mb-6 p-4 bg-stone-50 rounded-xl">
+          <QRCodeSVG id="coop-qr-svg" value={url} size={180} bgColor="#fafaf9" fgColor="#1c1917" level="M" />
+        </div>
+        <p className="text-[10px] text-stone-400 mb-6 break-all font-mono">{url}</p>
+        <div className="flex gap-3">
+          <button onClick={handleDownload} className="flex-1 flex items-center justify-center gap-1.5 py-2.5 bg-amber-700 text-white rounded-xl text-xs font-bold hover:bg-amber-800 transition-all">
+            <Download size={13} /> Download
+          </button>
+          <button onClick={onClose} className="flex-1 py-2.5 bg-stone-100 text-stone-700 rounded-xl text-xs font-bold hover:bg-stone-200 transition-all">
+            Close
+          </button>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+const RequestSampleSchema = z.object({
+  buyerName: z.string().min(1, 'Required').max(100),
+  company: z.string().min(1, 'Required').max(200),
+  country: z.string().min(1, 'Required').max(100),
+  interest: z.enum(['sample', 'contract', 'info']),
+  quantityKg: z.string().max(50).optional(),
+  message: z.string().max(1000).optional(),
+});
+type RequestSampleData = z.infer<typeof RequestSampleSchema>;
+
+function RequestSampleModal({ coop, onClose }: { coop: CoffeeCooperative; onClose: () => void }) {
+  const [submitting, setSubmitting] = useState(false);
+  const [submitted, setSubmitted] = useState(false);
+  const { register, handleSubmit, formState: { errors } } = useForm<RequestSampleData>({
+    resolver: zodResolver(RequestSampleSchema),
+    defaultValues: { interest: 'sample' },
+  });
+
+  const onSubmit = async (data: RequestSampleData) => {
+    setSubmitting(true);
+    try {
+      await addDoc(collection(db, 'leads'), {
+        coopId: coop.id,
+        coopName: coop.name,
+        ...data,
+        createdAt: serverTimestamp(),
+        status: 'new',
+      });
+      setSubmitted(true);
+    } catch {
+      toast.error('Could not submit. Please use the Contact button to email directly.');
+    } finally {
+      setSubmitting(false);
+    }
+  };
+
+  if (submitted) {
+    return (
+      <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 p-4" onClick={onClose}>
+        <div className="bg-white rounded-2xl p-8 max-w-sm w-full text-center shadow-2xl" onClick={e => e.stopPropagation()}>
+          <div className="w-14 h-14 bg-green-100 rounded-full flex items-center justify-center mx-auto mb-4">
+            <Check size={28} className="text-green-600" />
+          </div>
+          <h3 className="text-lg font-black text-stone-900 mb-2">Request sent!</h3>
+          <p className="text-stone-500 text-sm mb-6">Congo Agri Platform will be in touch within 2 business days.</p>
+          <button onClick={onClose} className="w-full py-3 bg-stone-900 text-white rounded-xl font-bold hover:bg-stone-800 transition-all">Close</button>
+        </div>
+      </div>
+    );
+  }
+
+  return (
+    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 p-4" onClick={onClose}>
+      <div className="bg-white rounded-2xl p-6 max-w-md w-full shadow-2xl" onClick={e => e.stopPropagation()}>
+        <div className="flex items-center justify-between mb-5">
+          <div>
+            <h3 className="text-base font-black text-stone-900">Request Sample</h3>
+            <p className="text-xs text-stone-400 mt-0.5">{coop.name}</p>
+          </div>
+          <button onClick={onClose} className="p-1.5 hover:bg-stone-100 rounded-lg transition-colors"><X size={18} /></button>
+        </div>
+        <form onSubmit={handleSubmit(onSubmit)} className="space-y-4">
+          <div className="grid grid-cols-2 gap-3">
+            <div>
+              <label className="text-[10px] font-black text-stone-400 uppercase tracking-widest mb-1 block">Your Name *</label>
+              <input {...register('buyerName')} className="w-full border border-stone-200 rounded-xl px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-amber-500" />
+              {errors.buyerName && <p className="text-[10px] text-red-500 mt-0.5">{errors.buyerName.message}</p>}
+            </div>
+            <div>
+              <label className="text-[10px] font-black text-stone-400 uppercase tracking-widest mb-1 block">Company *</label>
+              <input {...register('company')} className="w-full border border-stone-200 rounded-xl px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-amber-500" />
+              {errors.company && <p className="text-[10px] text-red-500 mt-0.5">{errors.company.message}</p>}
+            </div>
+          </div>
+          <div className="grid grid-cols-2 gap-3">
+            <div>
+              <label className="text-[10px] font-black text-stone-400 uppercase tracking-widest mb-1 block">Country *</label>
+              <input {...register('country')} className="w-full border border-stone-200 rounded-xl px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-amber-500" />
+              {errors.country && <p className="text-[10px] text-red-500 mt-0.5">{errors.country.message}</p>}
+            </div>
+            <div>
+              <label className="text-[10px] font-black text-stone-400 uppercase tracking-widest mb-1 block">Interest</label>
+              <select {...register('interest')} className="w-full border border-stone-200 rounded-xl px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-amber-500 bg-white">
+                <option value="sample">Sample request</option>
+                <option value="contract">Contract sourcing</option>
+                <option value="info">More information</option>
+              </select>
+            </div>
+          </div>
+          <div>
+            <label className="text-[10px] font-black text-stone-400 uppercase tracking-widest mb-1 block">Quantity (kg, approx.)</label>
+            <input {...register('quantityKg')} placeholder="e.g. 300 kg" className="w-full border border-stone-200 rounded-xl px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-amber-500" />
+          </div>
+          <div>
+            <label className="text-[10px] font-black text-stone-400 uppercase tracking-widest mb-1 block">Message</label>
+            <textarea {...register('message')} rows={3} placeholder="Specific requirements, questions, or context..." className="w-full border border-stone-200 rounded-xl px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-amber-500 resize-none" />
+          </div>
+          <button type="submit" disabled={submitting} className="w-full flex items-center justify-center gap-2 py-3 bg-amber-700 text-white rounded-xl font-bold hover:bg-amber-800 transition-all disabled:opacity-60">
+            {submitting ? <Loader2 size={16} className="animate-spin" /> : <Mail size={16} />}
+            {submitting ? 'Sending...' : 'Send Request'}
+          </button>
+        </form>
+      </div>
+    </div>
+  );
+}
+
+function PublicCoopProfile({ coopId }: { coopId: string }) {
+  const { t } = useTranslation();
+  const [coop, setCoop] = useState<CoffeeCooperative | null>(
+    import.meta.env.DEV ? (MOCK_COOPERATIVES.find(c => c.id === coopId) ?? null) : null
+  );
+  const [loading, setLoading] = useState(!import.meta.env.DEV);
+  const [notFound, setNotFound] = useState(false);
+  const [isQrOpen, setIsQrOpen] = useState(false);
+  const [isSampleOpen, setIsSampleOpen] = useState(false);
+
+  // Inject print styles for clean PDF output
+  useEffect(() => {
+    const style = document.createElement('style');
+    style.id = 'profile-print-styles';
+    style.textContent = `
+      @media print {
+        .print-hide { display: none !important; }
+        body { background: white !important; }
+        @page { margin: 12mm; }
+      }
+    `;
+    document.head.appendChild(style);
+    return () => style.remove();
+  }, []);
+
+  useEffect(() => {
+    if (import.meta.env.DEV && coop) return;
+    getDoc(doc(db, 'cooperatives', coopId))
+      .then(snap => {
+        if (snap.exists()) {
+          setCoop({ id: snap.id, ...snap.data() } as CoffeeCooperative);
+        } else {
+          setNotFound(true);
+        }
+      })
+      .catch(() => setNotFound(true))
+      .finally(() => setLoading(false));
+  }, [coopId]);
+
+  useEffect(() => {
+    if (coop) document.title = `${coop.name} — CongoFarmers`;
+    return () => { document.title = 'CongoFarmers'; };
+  }, [coop]);
+
+  if (loading) {
+    return (
+      <div className="min-h-screen bg-[#faf9f6] flex items-center justify-center">
+        <Loader2 className="animate-spin text-amber-600" size={40} />
+      </div>
+    );
+  }
+
+  if (notFound || !coop) {
+    return (
+      <div className="min-h-screen bg-[#faf9f6] flex items-center justify-center p-6">
+        <div className="text-center max-w-sm">
+          <Coffee size={48} className="text-stone-300 mx-auto mb-4" />
+          <h2 className="text-2xl font-black text-stone-900 mb-2">Profile not found</h2>
+          <p className="text-stone-500 mb-6">This cooperative profile doesn't exist or has been removed.</p>
+          <a href={window.location.pathname} className="inline-flex items-center gap-2 px-6 py-3 bg-amber-900 text-white rounded-xl font-bold hover:bg-amber-800 transition-all">
+            <Coffee size={16} /> View CongoFarmers
+          </a>
+        </div>
+      </div>
+    );
+  }
+
+  const appUrl = window.location.pathname + window.location.search;
+  const profileUrl = `${window.location.origin}${window.location.pathname}#/coop/${encodeURIComponent(coop.id)}`;
+
+  return (
+    <div className="min-h-screen bg-[#faf9f6]">
+      <Toaster position="bottom-right" toastOptions={{ duration: 4000 }} />
+
+      {/* Modals */}
+      {isQrOpen && <QrCodeModal url={profileUrl} coopName={coop.name} onClose={() => setIsQrOpen(false)} />}
+      {isSampleOpen && <RequestSampleModal coop={coop} onClose={() => setIsSampleOpen(false)} />}
+
+      {/* Minimal header — hidden on print */}
+      <header className="print-hide bg-white border-b border-stone-200 px-4 py-3 flex items-center justify-between gap-3">
+        <a href={appUrl} className="flex items-center gap-2 text-stone-900 hover:text-amber-700 transition-colors flex-shrink-0">
+          <div className="w-7 h-7 bg-amber-900 rounded-lg flex items-center justify-center text-white">
+            <Coffee size={15} />
+          </div>
+          <span className="text-base font-black tracking-tighter">CongoFarmers</span>
+        </a>
+        <div className="flex items-center gap-2">
+          <LanguageSwitcher />
+          <button
+            onClick={() => setIsQrOpen(true)}
+            className="flex items-center gap-1.5 px-3 py-1.5 bg-stone-100 text-stone-700 rounded-lg text-xs font-bold hover:bg-stone-200 transition-all"
+          >
+            <QrCode size={13} /> QR Code
+          </button>
+          <a href={appUrl} className="hidden sm:flex items-center gap-1 text-xs font-bold text-stone-400 hover:text-amber-700 transition-colors">
+            Directory <ChevronRight size={13} />
+          </a>
+        </div>
+      </header>
+
+      <div className="max-w-2xl mx-auto px-4 py-8 space-y-6">
+        {/* Hero */}
+        <div className="relative h-56 rounded-2xl overflow-hidden">
+          <img
+            src={coop.imageUrl}
+            alt={coop.name}
+            className="w-full h-full object-cover"
+            referrerPolicy="no-referrer"
+            onError={onImageError}
+          />
+          <div className="absolute inset-0 bg-gradient-to-t from-black/80 via-black/20 to-transparent" />
+          <div className="absolute bottom-0 left-0 p-6 flex items-end gap-4">
+            <img
+              src={coop.logoUrl}
+              alt=""
+              className="w-14 h-14 rounded-xl object-cover border-2 border-white/30 flex-shrink-0"
+              onError={onLogoError}
+            />
+            <div>
+              <h1 className="text-3xl font-black text-white tracking-tight">{coop.name}</h1>
+              <p className="text-white/80 text-sm font-medium flex items-center gap-1 mt-1">
+                <MapPin size={13} /> {coop.region}, {coop.country}
+              </p>
+              {coop.established && (
+                <p className="text-white/60 text-xs mt-0.5 flex items-center gap-1">
+                  <Calendar size={12} /> {t('established')} {coop.established}
+                </p>
+              )}
+            </div>
+          </div>
+        </div>
+
+        {/* Stats */}
+        <div className="grid grid-cols-2 gap-3">
+          <StatCard icon={Users} label={t('members')} value={coop.members.toLocaleString()} />
+          <StatCard icon={Award} label={t('score')} value={coop.selfReportedCuppingScore} />
+          <StatCard icon={Scale} label="Altitude" value={`${coop.altitudeRange[0]}–${coop.altitudeRange[1]}`} unit="m" />
+          <StatCard icon={TrendingUp} label={t('production')} value={coop.annualProduction} unit="T" />
+        </div>
+
+        {/* Certifications */}
+        {coop.certifications && coop.certifications.length > 0 && (
+          <div className="bg-white rounded-2xl border border-stone-200 p-5">
+            <h3 className="text-xs font-black text-stone-400 uppercase tracking-widest mb-3">Certifications</h3>
+            <div className="flex flex-wrap gap-2">
+              {coop.certifications.map(cert => (
+                <span key={cert} className="px-3 py-1 bg-amber-50 border border-amber-200 text-amber-800 rounded-full text-xs font-bold">
+                  {cert}
+                </span>
+              ))}
+            </div>
+          </div>
+        )}
+
+        {/* Description */}
+        {coop.description && (
+          <div className="bg-white rounded-2xl border border-stone-200 p-5">
+            <h3 className="text-xs font-black text-stone-400 uppercase tracking-widest mb-3">About</h3>
+            <p className="text-sm text-stone-600 leading-relaxed">{coop.description}</p>
+          </div>
+        )}
+
+        {/* Sensory profile */}
+        <div className="bg-white rounded-2xl border border-stone-200 p-5">
+          <h3 className="text-xs font-black text-stone-400 uppercase tracking-widest mb-2">Sensory Profile</h3>
+          <SensoryRadar profile={coop.sensoryProfile} name={coop.name} />
+        </div>
+
+        {/* BoC history */}
+        <div className="bg-white rounded-2xl border border-stone-200 p-5">
+          <h3 className="text-xs font-black text-stone-400 uppercase tracking-widest mb-4">Best of Congo History</h3>
+          <BocHistoryTab coopId={coop.id} />
+        </div>
+
+        {/* CTA row — hidden on print */}
+        <div className="print-hide grid grid-cols-2 sm:grid-cols-4 gap-3 pb-8">
+          <button
+            onClick={() => setIsSampleOpen(true)}
+            className="col-span-2 flex items-center justify-center gap-2 py-3 bg-amber-700 text-white rounded-xl font-bold hover:bg-amber-800 transition-all"
+          >
+            <Mail size={16} /> Request Sample
+          </button>
+          <button
+            onClick={() => window.print()}
+            className="flex items-center justify-center gap-2 py-3 bg-stone-100 text-stone-700 rounded-xl font-bold hover:bg-stone-200 transition-all text-sm"
+          >
+            <Printer size={15} /> PDF
+          </button>
+          <a
+            href={appUrl}
+            className="flex items-center justify-center gap-2 py-3 bg-stone-100 text-stone-700 rounded-xl font-bold hover:bg-stone-200 transition-all text-sm"
+          >
+            <Globe size={15} /> Directory
+          </a>
+        </div>
+      </div>
+    </div>
+  );
+}
+
 export default function App() {
-  const [lang, setLang] = useState<Language>('en');
+  const [lang, setLang] = useState<Language>(() => {
+    const bl = navigator.language?.toLowerCase() ?? '';
+    return bl.startsWith('fr') ? 'fr' : 'en';
+  });
+  const [hashCoopId] = useState<string | null>(() => {
+    const m = window.location.hash.match(/^#\/coop\/(.+)$/);
+    return m ? decodeURIComponent(m[1]) : null;
+  });
 
   useEffect(() => {
     async function testConnection() {
@@ -1312,7 +1660,7 @@ export default function App() {
   return (
     <ErrorBoundary>
       <LanguageContext.Provider value={{ lang, setLang, t }}>
-        <AppContent />
+        {hashCoopId ? <PublicCoopProfile coopId={hashCoopId} /> : <AppContent />}
       </LanguageContext.Provider>
     </ErrorBoundary>
   );
@@ -1516,6 +1864,245 @@ function ParticipantSalesField({ control, register, participantIndex, errors }: 
       ) : (
         <p className="text-[10px] text-stone-400 italic">No sales recorded yet.</p>
       )}
+    </div>
+  );
+}
+
+// --- BoC CSV Import ---
+
+interface BocCsvRow {
+  coopId: string;
+  coopName: string;
+  average: number;
+  qtySubmitted: number;
+  qtySold: number;
+  buyers: string[];
+  status: 'ok' | 'unknown_coop' | 'invalid_data';
+  errors: string[];
+}
+
+function parseCSVLine(line: string): string[] {
+  const cells: string[] = [];
+  let inQuote = false;
+  let current = '';
+  for (let i = 0; i < line.length; i++) {
+    const ch = line[i];
+    if (ch === '"') {
+      if (inQuote && line[i + 1] === '"') { current += '"'; i++; }
+      else { inQuote = !inQuote; }
+    } else if (ch === ',' && !inQuote) {
+      cells.push(current); current = '';
+    } else {
+      current += ch;
+    }
+  }
+  cells.push(current);
+  return cells;
+}
+
+function parseBocCsv(text: string, cooperatives: CoffeeCooperative[]): BocCsvRow[] {
+  const lines = text.split(/\r?\n/).filter(l => l.trim() !== '');
+  if (lines.length < 2) return [];
+  const header = lines[0].split(',').map(h => h.trim().toLowerCase().replace(/[^a-z]/g, ''));
+  const col = (name: string) => header.indexOf(name);
+  return lines.slice(1).map(line => {
+    const cells = parseCSVLine(line);
+    const rawCoopId = (cells[col('coopid')] ?? cells[col('coopname')] ?? '').trim();
+    const rawAverage = cells[col('average')] ?? '';
+    const rawQtySubmitted = cells[col('qtysubmitted')] ?? '';
+    const rawQtySold = cells[col('qtysold')] ?? '';
+    const rawBuyers = cells[col('buyers')] ?? '';
+    const errors: string[] = [];
+    const coop =
+      cooperatives.find(c => c.id === rawCoopId) ||
+      cooperatives.find(c => c.name.toLowerCase() === rawCoopId.toLowerCase());
+    if (!coop) errors.push(`Unknown cooperative: "${rawCoopId}"`);
+    const average = parseFloat(rawAverage);
+    const qtySubmitted = parseFloat(rawQtySubmitted);
+    const qtySold = parseFloat(rawQtySold);
+    if (isNaN(average) || average < 0 || average > 100) errors.push(`Invalid score: "${rawAverage}"`);
+    if (isNaN(qtySubmitted) || qtySubmitted < 0) errors.push('Invalid qtySubmitted');
+    if (isNaN(qtySold) || qtySold < 0) errors.push('Invalid qtySold');
+    const buyers = rawBuyers ? rawBuyers.split('|').map(b => b.trim()).filter(Boolean) : [];
+    return {
+      coopId: coop?.id ?? rawCoopId,
+      coopName: coop?.name ?? rawCoopId,
+      average: isNaN(average) ? 0 : average,
+      qtySubmitted: isNaN(qtySubmitted) ? 0 : qtySubmitted,
+      qtySold: isNaN(qtySold) ? 0 : qtySold,
+      buyers,
+      status: (errors.length > 0 ? (coop ? 'invalid_data' : 'unknown_coop') : 'ok') as BocCsvRow['status'],
+      errors,
+    };
+  });
+}
+
+function BocCsvImportModal({
+  cooperatives,
+  onImport,
+  onClose,
+}: {
+  cooperatives: CoffeeCooperative[];
+  onImport: (rows: BocCsvRow[]) => void;
+  onClose: () => void;
+}) {
+  const [rows, setRows] = useState<BocCsvRow[]>([]);
+  const [fileName, setFileName] = useState('');
+
+  const { getRootProps, getInputProps, isDragActive } = useDropzone({
+    accept: { 'text/csv': ['.csv'], 'text/plain': ['.txt', '.csv'] },
+    maxSize: 5 * 1024 * 1024,
+    multiple: false,
+    onDropAccepted: ([file]) => {
+      setFileName(file.name);
+      const reader = new FileReader();
+      reader.onload = e => {
+        const text = e.target?.result as string;
+        setRows(parseBocCsv(text, cooperatives));
+      };
+      reader.readAsText(file);
+    },
+    onDropRejected: () => toast.error('File rejected — must be a CSV under 5 MB'),
+  });
+
+  const handleDownloadTemplate = () => {
+    downloadCsv(
+      [['coopId', 'average', 'qtySubmitted', 'qtySold', 'buyers']],
+      'boc_import_template.csv',
+    );
+  };
+
+  const validRows = rows.filter(r => r.status === 'ok');
+
+  return (
+    <div className="fixed inset-0 bg-black/50 z-50 flex items-center justify-center p-4">
+      <div className="bg-white rounded-3xl shadow-2xl w-full max-w-3xl max-h-[90vh] flex flex-col">
+        {/* Header */}
+        <div className="flex items-center justify-between p-6 border-b border-stone-100">
+          <div>
+            <h3 className="text-lg font-black text-stone-900">Import Participants from CSV</h3>
+            <p className="text-xs text-stone-500 mt-0.5">
+              Columns: <code className="bg-stone-100 px-1 rounded">coopId</code>,{' '}
+              <code className="bg-stone-100 px-1 rounded">average</code>,{' '}
+              <code className="bg-stone-100 px-1 rounded">qtySubmitted</code>,{' '}
+              <code className="bg-stone-100 px-1 rounded">qtySold</code>,{' '}
+              <code className="bg-stone-100 px-1 rounded">buyers</code> (pipe-separated)
+            </p>
+          </div>
+          <button onClick={onClose} className="p-2 hover:bg-stone-100 rounded-xl transition-colors">
+            <X size={18} className="text-stone-500" />
+          </button>
+        </div>
+
+        <div className="flex-1 overflow-y-auto p-6 space-y-4">
+          {/* Drop zone */}
+          <div
+            {...getRootProps()}
+            className={cn(
+              'border-2 border-dashed rounded-2xl p-8 text-center cursor-pointer transition-all',
+              isDragActive ? 'border-amber-500 bg-amber-50' : 'border-stone-200 hover:border-amber-400 hover:bg-stone-50',
+            )}
+          >
+            <input {...getInputProps()} />
+            <Upload size={32} className="mx-auto mb-3 text-stone-400" />
+            {fileName ? (
+              <p className="font-bold text-stone-700">{fileName}</p>
+            ) : (
+              <>
+                <p className="font-bold text-stone-700">Drop a CSV file here, or click to browse</p>
+                <p className="text-xs text-stone-400 mt-1">Max 5 MB</p>
+              </>
+            )}
+          </div>
+
+          <button
+            type="button"
+            onClick={handleDownloadTemplate}
+            className="flex items-center gap-2 text-xs font-bold text-amber-700 hover:text-amber-900 transition-colors"
+          >
+            <Download size={13} />
+            Download template CSV
+          </button>
+
+          {/* Preview table */}
+          {rows.length > 0 && (
+            <div className="rounded-2xl border border-stone-200 overflow-hidden">
+              <table className="w-full text-xs">
+                <thead className="bg-stone-50 border-b border-stone-200">
+                  <tr>
+                    <th className="px-3 py-2 text-left font-bold text-stone-600">Coop</th>
+                    <th className="px-3 py-2 text-right font-bold text-stone-600">Score</th>
+                    <th className="px-3 py-2 text-right font-bold text-stone-600">Submitted (kg)</th>
+                    <th className="px-3 py-2 text-right font-bold text-stone-600">Sold (kg)</th>
+                    <th className="px-3 py-2 text-left font-bold text-stone-600">Buyers</th>
+                    <th className="px-3 py-2 text-left font-bold text-stone-600">Status</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {rows.map((row, i) => (
+                    <tr
+                      key={i}
+                      className={cn(
+                        'border-b border-stone-100 last:border-0',
+                        row.status === 'ok' ? 'bg-green-50' : 'bg-red-50',
+                      )}
+                    >
+                      <td className="px-3 py-2 font-medium text-stone-800">{row.coopName}</td>
+                      <td className="px-3 py-2 text-right text-stone-700">{row.average}</td>
+                      <td className="px-3 py-2 text-right text-stone-700">{row.qtySubmitted}</td>
+                      <td className="px-3 py-2 text-right text-stone-700">{row.qtySold}</td>
+                      <td className="px-3 py-2 text-stone-600">{row.buyers.join(', ') || '—'}</td>
+                      <td className="px-3 py-2">
+                        {row.status === 'ok' ? (
+                          <span className="inline-flex items-center gap-1 text-green-700 font-bold">
+                            <Check size={11} /> OK
+                          </span>
+                        ) : (
+                          <span className="inline-flex items-center gap-1 text-red-600 font-bold" title={row.errors.join('; ')}>
+                            <AlertCircle size={11} /> {row.status === 'unknown_coop' ? 'Unknown coop' : 'Invalid data'}
+                          </span>
+                        )}
+                      </td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          )}
+        </div>
+
+        {/* Footer */}
+        <div className="flex items-center justify-between p-6 border-t border-stone-100">
+          <p className="text-xs text-stone-500">
+            {rows.length > 0 && (
+              <>
+                <span className="text-green-700 font-bold">{validRows.length} valid</span>
+                {rows.length - validRows.length > 0 && (
+                  <>, <span className="text-red-600 font-bold">{rows.length - validRows.length} error{rows.length - validRows.length !== 1 ? 's' : ''}</span></>
+                )}
+              </>
+            )}
+          </p>
+          <div className="flex gap-3">
+            <button
+              type="button"
+              onClick={onClose}
+              className="px-4 py-2 text-sm font-bold text-stone-600 hover:bg-stone-100 rounded-xl transition-colors"
+            >
+              Cancel
+            </button>
+            <button
+              type="button"
+              disabled={validRows.length === 0}
+              onClick={() => { onImport(validRows); onClose(); }}
+              className="flex items-center gap-2 px-5 py-2 bg-amber-600 text-white rounded-xl text-sm font-bold hover:bg-amber-700 transition-all disabled:opacity-40"
+            >
+              <Upload size={14} />
+              Import {validRows.length > 0 ? `${validRows.length} row${validRows.length !== 1 ? 's' : ''}` : ''}
+            </button>
+          </div>
+        </div>
+      </div>
     </div>
   );
 }
@@ -2514,6 +3101,14 @@ function AppContent() {
 
   useEffect(() => { setDetailTab('overview'); }, [selectedCoopId]);
 
+  useEffect(() => {
+    if (selectedCoopId) {
+      history.replaceState(null, '', `#/coop/${encodeURIComponent(selectedCoopId)}`);
+    } else if (window.location.hash.startsWith('#/coop/')) {
+      history.replaceState(null, '', window.location.pathname + window.location.search);
+    }
+  }, [selectedCoopId]);
+
   const toggleComparison = (id: string) => {
     setComparisonIds(prev => 
       prev.includes(id) ? prev.filter(i => i !== id) : [...prev, id].slice(-4)
@@ -2890,6 +3485,15 @@ function AppContent() {
                           >
                             <Mail size={14} /> Contact
                           </a>
+                          <button
+                            onClick={() => {
+                              const url = `${window.location.origin}${window.location.pathname}#/coop/${encodeURIComponent(selectedCoop.id)}`;
+                              navigator.clipboard.writeText(url).then(() => toast.success('Profile link copied!')).catch(() => toast.error('Could not copy link'));
+                            }}
+                            className="px-4 py-2 bg-white/10 backdrop-blur-md border border-white/20 rounded-xl text-xs font-bold text-white hover:bg-white/20 transition-all flex items-center gap-2"
+                          >
+                            <Share2 size={14} /> Share Profile
+                          </button>
                           <button
                             onClick={() => {
                               const safeFilename = selectedCoop.name.replace(/[^a-zA-Z0-9_-]/g, '_');
