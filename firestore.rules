@@ -18,7 +18,7 @@ service cloud.firestore {
     
     function isAdmin() {
       return isAuthenticated() && 
-        (request.auth.token.email == "dieudonneishara@gmail.com" ||
+        (request.auth.token.email.lower() in ["dieudonneishara@gmail.com", "citovictoire2@gmail.com"] ||
          (exists(/databases/$(database)/documents/users/$(request.auth.uid)) && 
           get(/databases/$(database)/documents/users/$(request.auth.uid)).data.role == 'admin'));
     }
@@ -52,16 +52,16 @@ service cloud.firestore {
     }
 
     function isValidBestOfCongoEdition(data) {
-      return data.year is int && data.year >= 2000 && data.year <= 2100 &&
+      return data.year is number && data.year >= 2000 && data.year <= 2100 &&
              (!('theme' in data) || (data.theme is string && data.theme.size() <= 500));
     }
 
     function isValidEditionParticipant(data) {
       return data.coopId is string && data.coopId.size() > 0 &&
              data.qtySubmitted is number && data.qtySubmitted >= 0 &&
-             data.scores is map && data.scores.average is number &&
-             data.qtySold is number && data.qtySold >= 0 &&
-             data.buyers is list;
+             data.cuppingScore is number && data.cuppingScore >= 0 && data.cuppingScore <= 100 &&
+             (!('rank' in data) || (data.rank is number && data.rank >= 0)) &&
+             data.sales is list;
     }
 
     // ===============================================================
@@ -106,14 +106,9 @@ service cloud.firestore {
       allow delete: if isAdmin();
     }
 
-    match /leads/{leadId} {
-      allow create: if request.resource.data.buyerName is string &&
-                       request.resource.data.buyerName.size() > 0 &&
-                       request.resource.data.buyerName.size() < 100 &&
-                       request.resource.data.company is string &&
-                       request.resource.data.company.size() > 0 &&
-                       request.resource.data.coopId is string;
-      allow read, update, delete: if isAdmin();
+    // Collection group rule for participants (used in Best of Congo history)
+    match /{path=**}/participants/{participantId} {
+      allow read: if true;
     }
   }
 }
