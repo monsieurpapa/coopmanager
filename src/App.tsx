@@ -8,14 +8,14 @@ import {
   Coffee, Users, MapPin, Calendar, Award,
   TrendingUp, Leaf, Scale, ChevronRight, X,
   ArrowLeftRight, Info, DollarSign, Globe, Languages,
-  Plus, Upload, LogIn, LogOut, Shield, User as UserIcon, Loader2, Check, Search, Filter, Download, Edit, Trash2, Mail, Share2, QrCode, Printer
+  Plus, Upload, LogIn, LogOut, Shield, User as UserIcon, Loader2, Check, Search, Filter, Download, Edit, Trash2, Mail, Share2, QrCode, Printer, AlertCircle
 } from 'lucide-react';
 import { QRCodeSVG } from 'qrcode.react';
 import { motion, AnimatePresence } from 'motion/react';
 import { MOCK_COOPERATIVES, CoffeeCooperative, EditionParticipant, BestOfCongoEdition } from './types';
 import { cn } from './lib/utils';
 import { auth, db } from './firebase';
-import { onAuthStateChanged, signInWithPopup, GoogleAuthProvider, signOut, User as FirebaseUser } from 'firebase/auth';
+import { type User as FirebaseUser } from 'firebase/auth';
 import { collection, onSnapshot, doc, setDoc, getDoc, updateDoc, addDoc, query, where, serverTimestamp, deleteDoc, getDocs, getDocFromServer, writeBatch, collectionGroup } from 'firebase/firestore';
 import { useDropzone } from 'react-dropzone';
 import { parseCooperativeProfile } from './services/geminiService';
@@ -27,6 +27,8 @@ import * as z from 'zod';
 import { handleFirestoreError, OperationType } from './lib/firestore-utils';
 import { CooperativeSchema, type CooperativeFormData } from './schemas';
 import { LanguageContext, useTranslation, LanguageSwitcher, translations, type Language } from './contexts/language';
+import { AuthContext, useAuth, useAuthProvider } from './contexts/auth';
+import { isAdmin, canAccessStaging, canAccessBocAdmin, canAccessPortal } from './lib/permissions';
 import { LOGO_FALLBACK, IMAGE_FALLBACK, onLogoError, onImageError } from './lib/image-utils';
 
 class ErrorBoundary extends React.Component<{ children: React.ReactNode }, { hasError: boolean, error: Error | null }> {
@@ -1657,11 +1659,15 @@ export default function App() {
     return translations[lang][key] || translations.en[key];
   };
 
+  const authValue = useAuthProvider();
+
   return (
     <ErrorBoundary>
-      <LanguageContext.Provider value={{ lang, setLang, t }}>
-        {hashCoopId ? <PublicCoopProfile coopId={hashCoopId} /> : <AppContent />}
-      </LanguageContext.Provider>
+      <AuthContext.Provider value={authValue}>
+        <LanguageContext.Provider value={{ lang, setLang, t }}>
+          {hashCoopId ? <PublicCoopProfile coopId={hashCoopId} /> : <AppContent />}
+        </LanguageContext.Provider>
+      </AuthContext.Provider>
     </ErrorBoundary>
   );
 }
@@ -2999,9 +3005,7 @@ function AppContent() {
   const [isAboutOpen, setIsAboutOpen] = useState(false);
   const [currentView, setCurrentView] = useState<'directory' | 'comparison' | 'staging' | 'portal' | 'boc-admin' | 'leaderboard'>('directory');
   const [hoveredCoopId, setHoveredCoopId] = useState<string | null>(null);
-  const [user, setUser] = useState<FirebaseUser | null>(null);
-  const [userProfile, setUserProfile] = useState<any>(null);
-  const [isProfileLoading, setIsProfileLoading] = useState(true);
+  const { user, profile: userProfile, isLoading: isProfileLoading, login: handleLogin, logout: handleLogoutBase } = useAuth();
   const [portalCoopId, setPortalCoopId] = useState<string | null>(null);
   const [cooperatives, setCooperatives] = useState<CoffeeCooperative[]>(
     import.meta.env.DEV ? MOCK_COOPERATIVES : []
@@ -3041,52 +3045,6 @@ function AppContent() {
   }, [cooperatives, facetFilters]);
 
   useEffect(() => {
-    const unsubscribe = onAuthStateChanged(auth, async (u) => {
-      setUser(u);
-      if (u) {
-        const docRef = doc(db, 'users', u.uid);
-        const docSnap = await getDoc(docRef);
-        let profile;
-        if (docSnap.exists()) {
-          profile = docSnap.data();
-        } else {
-          profile = { email: u.email, role: 'user', createdAt: serverTimestamp() };
-          await setDoc(docRef, profile);
-        }
-        
-        // Force admin role for the hardcoded admin email
-        if (u.email === "dieudonneishara@gmail.com") {
-          profile.role = 'admin';
-        }
-
-        // Check if user is an invited manager
-        if (u.email && !profile.cooperativeId) {
-          const coopsRef = collection(db, 'cooperatives');
-          const q = query(coopsRef, where('managerEmail', '==', u.email));
-          const querySnapshot = await getDocs(q);
-          if (!querySnapshot.empty) {
-            const coopDoc = querySnapshot.docs[0];
-            profile.cooperativeId = coopDoc.id;
-            profile.role = 'coop_manager';
-            // Update the user profile in DB
-            await updateDoc(doc(db, 'users', u.uid), { 
-              cooperativeId: coopDoc.id,
-              role: 'coop_manager'
-            });
-          }
-        }
-
-        setUserProfile(profile);
-        setIsProfileLoading(false);
-      } else {
-        setUserProfile(null);
-        setIsProfileLoading(false);
-      }
-    });
-    return unsubscribe;
-  }, []);
-
-  useEffect(() => {
     const path = 'cooperatives';
     const unsubscribe = onSnapshot(collection(db, 'cooperatives'), (snapshot) => {
       const dbCoops = snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() } as CoffeeCooperative));
@@ -3101,17 +3059,8 @@ function AppContent() {
     return unsubscribe;
   }, []);
 
-  const handleLogin = async () => {
-    const provider = new GoogleAuthProvider();
-    try {
-      await signInWithPopup(auth, provider);
-    } catch (error) {
-      console.error("Login failed", error);
-    }
-  };
-
   const handleLogout = async () => {
-    await signOut(auth);
+    await handleLogoutBase();
     setCurrentView('directory');
   };
 
@@ -3192,7 +3141,7 @@ function AppContent() {
                 <Info size={14} />
                 {t('about')}
               </button>
-              {userProfile?.role === 'admin' && (
+              {canAccessStaging(userProfile) && (
                 <button
                   onClick={() => { setCurrentView('staging'); setPortalCoopId(null); }}
                   className={cn(
@@ -3204,7 +3153,7 @@ function AppContent() {
                   {t('stagingArea')}
                 </button>
               )}
-              {userProfile?.role === 'admin' && (
+              {canAccessBocAdmin(userProfile) && (
                 <button
                   onClick={() => { setCurrentView('boc-admin'); setPortalCoopId(null); }}
                   className={cn(
@@ -3216,8 +3165,8 @@ function AppContent() {
                   BoC Admin
                 </button>
               )}
-              {userProfile?.cooperativeId && (
-                <button 
+              {canAccessPortal(userProfile) && (
+                <button
                   onClick={() => { setCurrentView('portal'); setPortalCoopId(null); }}
                   className={cn(
                     "px-4 py-2 rounded-full text-sm font-bold transition-all flex items-center gap-2",
@@ -3297,7 +3246,7 @@ function AppContent() {
             />
           </motion.div>
         ) : currentView === 'staging' ? (
-          <StagingArea />
+          canAccessStaging(userProfile) ? <StagingArea /> : <p className="text-stone-500">{t('unauthorized')}</p>
         ) : currentView === 'leaderboard' ? (
           <BocLeaderboard
             onCoopSelect={(coopId) => {
@@ -3306,13 +3255,15 @@ function AppContent() {
             }}
           />
         ) : currentView === 'boc-admin' ? (
-          <BocEditionAdmin cooperatives={cooperatives} />
+          canAccessBocAdmin(userProfile) ? <BocEditionAdmin cooperatives={cooperatives} /> : <p className="text-stone-500">{t('unauthorized')}</p>
         ) : currentView === 'portal' ? (
           isProfileLoading ? (
             <div className="p-12 text-center"><Loader2 className="animate-spin mx-auto text-amber-600" /></div>
+          ) : !isAdmin(userProfile) && !canAccessPortal(userProfile) ? (
+            <p className="text-stone-500">{t('unauthorized')}</p>
           ) : (
-            <CoopPortal 
-              coopId={portalCoopId || userProfile?.cooperativeId} 
+            <CoopPortal
+              coopId={portalCoopId || userProfile?.cooperativeId}
               isNew={!portalCoopId && !userProfile?.cooperativeId}
               onComplete={() => {
                 setCurrentView('directory');
@@ -3326,7 +3277,7 @@ function AppContent() {
             <div className="lg:col-span-4 space-y-4">
               <div className="flex items-center justify-between mb-3">
                 <p className="text-xs font-black text-stone-400 uppercase tracking-widest">{t('cooperatives')}</p>
-                {userProfile?.role === 'admin' && (
+                {isAdmin(userProfile) && (
                   <button
                     onClick={() => {
                       setPortalCoopId(null);
@@ -3450,7 +3401,7 @@ function AppContent() {
                             <span className="flex items-center gap-1"><Calendar size={14} /> {t('established')} {selectedCoop.established}</span>
                           </div>
                           
-                          {userProfile?.role === 'admin' && (
+                          {isAdmin(userProfile) && (
                             <div className="mt-4 flex flex-wrap gap-3">
                               <button 
                                 onClick={() => {
@@ -3487,7 +3438,6 @@ function AppContent() {
                                     if (!user) return;
                                     const docRef = doc(db, 'users', user.uid);
                                     await updateDoc(docRef, { cooperativeId: selectedCoop.id });
-                                    setUserProfile({ ...userProfile, cooperativeId: selectedCoop.id });
                                     toast.success(`You are now the manager of ${selectedCoop.name}. The Cooperative Portal is now accessible in the navigation bar.`);
                                   }}
                                   className="flex items-center gap-2 px-4 py-2 bg-amber-600 text-white rounded-xl text-xs font-bold hover:bg-amber-700 transition-all shadow-lg"

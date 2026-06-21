@@ -15,16 +15,31 @@ service cloud.firestore {
     function getUserData() {
       return get(/databases/$(database)/documents/users/$(request.auth.uid)).data;
     }
-    
+
+    // isAdmin is a pure role check. The only place a hardcoded email grants
+    // anything is isBootstrapAdminEmail(), used once to let the founder
+    // account claim role:'admin' on its own /users doc (see /users update).
     function isAdmin() {
-      return isAuthenticated() && 
-        (request.auth.token.email.lower() in ["dieudonneishara@gmail.com", "citovictoire2@gmail.com"] ||
-         (exists(/databases/$(database)/documents/users/$(request.auth.uid)) && 
-          get(/databases/$(database)/documents/users/$(request.auth.uid)).data.role == 'admin'));
+      return isAuthenticated() &&
+        exists(/databases/$(database)/documents/users/$(request.auth.uid)) &&
+        get(/databases/$(database)/documents/users/$(request.auth.uid)).data.role == 'admin';
     }
-    
+
+    function isBootstrapAdminEmail() {
+      return isAuthenticated() &&
+        request.auth.token.email.lower() in ["dieudonneishara@gmail.com", "citovictoire2@gmail.com"];
+    }
+
     function isCoopManager(coopId) {
       return isAuthenticated() && getUserData().role == 'coop_manager' && getUserData().cooperativeId == coopId;
+    }
+
+    // Verifies an invited manager's claim server-side: the cooperative they're
+    // about to attach to must list their verified auth email as managerEmail.
+    function isClaimingInvite() {
+      return request.resource.data.cooperativeId is string &&
+        exists(/databases/$(database)/documents/cooperatives/$(request.resource.data.cooperativeId)) &&
+        get(/databases/$(database)/documents/cooperatives/$(request.resource.data.cooperativeId)).data.managerEmail == request.auth.token.email;
     }
 
     function isValidId(id) {
@@ -74,22 +89,51 @@ service cloud.firestore {
 
     match /users/{userId} {
       allow read: if isOwner(userId) || isAdmin();
-      allow create: if isAuthenticated() && (isOwner(userId) || isAdmin());
-      allow update: if isAdmin() || (isOwner(userId) && isValidUser(request.resource.data) && 
-                      request.resource.data.role == resource.data.role &&
-                      request.resource.data.email == resource.data.email);
+
+      // Self-created docs are always born as plain 'user' with no cooperativeId,
+      // and the email must match the verified auth token (no spoofing). Admins
+      // may create docs for other users without those restrictions.
+      allow create: if isAdmin() ||
+        (isOwner(userId) && isValidUser(request.resource.data) &&
+         request.resource.data.role == 'user' &&
+         request.resource.data.email == request.auth.token.email &&
+         !('cooperativeId' in request.resource.data));
+
+      allow update: if
+        // Admins can edit any user doc, but the result must still be valid.
+        (isAdmin() && isValidUser(request.resource.data)) ||
+        // Owners can edit their own profile fields, but never role or email.
+        (isOwner(userId) && isValidUser(request.resource.data) &&
+         request.resource.data.role == resource.data.role &&
+         request.resource.data.email == resource.data.email) ||
+        // One-time bootstrap: the founder account claims role 'admin' on itself.
+        (isOwner(userId) && isBootstrapAdminEmail() &&
+         resource.data.role != 'admin' &&
+         request.resource.data.role == 'admin' &&
+         request.resource.data.email == resource.data.email &&
+         request.resource.data.diff(resource.data).affectedKeys().hasOnly(['role']) &&
+         isValidUser(request.resource.data)) ||
+        // Invite claim: an invited manager attaches the cooperative that named
+        // their verified email, verified server-side via isClaimingInvite().
+        (isOwner(userId) && resource.data.role == 'user' && !('cooperativeId' in resource.data) &&
+         request.resource.data.role == 'coop_manager' &&
+         request.resource.data.email == resource.data.email &&
+         isClaimingInvite() &&
+         request.resource.data.diff(resource.data).affectedKeys().hasOnly(['role', 'cooperativeId']) &&
+         isValidUser(request.resource.data));
     }
 
     match /cooperatives/{coopId} {
       allow read: if true;
       allow create: if (isAdmin() || isCoopManager(coopId)) && isValidCooperative(request.resource.data);
-      allow update: if (isAdmin() || isCoopManager(coopId));
+      allow update: if (isAdmin() || isCoopManager(coopId)) && isValidCooperative(request.resource.data);
       allow delete: if isAdmin();
     }
 
     match /staging_cooperatives/{stagingId} {
       allow read: if isAdmin();
-      allow create: if isAuthenticated() && isValidStaging(request.resource.data);
+      allow create: if isAuthenticated() && isValidStaging(request.resource.data) &&
+                       request.resource.data.uploadedBy == request.auth.uid;
       allow update: if isAdmin();
       allow delete: if isAdmin();
     }
