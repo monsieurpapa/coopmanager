@@ -28,7 +28,7 @@ import { handleFirestoreError, OperationType } from './lib/firestore-utils';
 import { CooperativeSchema, type CooperativeFormData } from './schemas';
 import { LanguageContext, useTranslation, LanguageSwitcher, translations, type Language } from './contexts/language';
 import { AuthContext, useAuth, useAuthProvider } from './contexts/auth';
-import { isAdmin, canAccessStaging, canAccessBocAdmin, canAccessPortal } from './lib/permissions';
+import { isAdmin, canAccessStaging, canAccessBocAdmin, canAccessPortal, canDeleteCooperative } from './lib/permissions';
 import { LOGO_FALLBACK, IMAGE_FALLBACK, onLogoError, onImageError } from './lib/image-utils';
 
 class ErrorBoundary extends React.Component<{ children: React.ReactNode }, { hasError: boolean, error: Error | null }> {
@@ -905,7 +905,7 @@ function StagingArea() {
 // --- Cooperative Portal Component ---
 const TOTAL_STEPS = 4;
 
-function CoopPortal({ coopId, isNew = false, onComplete }: { coopId?: string, isNew?: boolean, onComplete?: () => void }) {
+function CoopPortal({ coopId, isNew = false, onComplete, canDelete = false }: { coopId?: string, isNew?: boolean, onComplete?: () => void, canDelete?: boolean }) {
   const { t } = useTranslation();
   const [coop, setCoop] = useState<any>(isNew ? {
     name: '',
@@ -1025,7 +1025,7 @@ function CoopPortal({ coopId, isNew = false, onComplete }: { coopId?: string, is
               </div>
             ))}
           </div>
-          {!isNew && (
+          {!isNew && canDelete && (
             <button
               type="button"
               onClick={async () => {
@@ -3265,6 +3265,7 @@ function AppContent() {
             <CoopPortal
               coopId={portalCoopId || userProfile?.cooperativeId}
               isNew={!portalCoopId && !userProfile?.cooperativeId}
+              canDelete={canDeleteCooperative(userProfile)}
               onComplete={() => {
                 setCurrentView('directory');
                 setPortalCoopId(null);
