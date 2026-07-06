@@ -23,6 +23,21 @@ export interface BestOfCongoEdition {
 
 // --- Cooperative ---
 
+// EUDR geolocation-readiness summary, computed offline by tools/eudr and
+// written by an admin only (enforced in firestore.rules — coop_managers can
+// neither create nor modify this field). Attests geolocation readiness ONLY,
+// never deforestation-free status.
+export interface EudrCompliance {
+  scorePercent: number;
+  totalFarms: number;
+  farmsWithGps: number;
+  oversizedFarmsMissingPolygon: boolean;
+  computedAt: string;          // UTC ISO-8601 from the script
+  sourceFileHash: string;      // SHA-256 of the source registry file
+  sourceFileName: string;
+  scriptVersion: string;
+}
+
 export interface SensoryProfile {
   aroma: number;
   acidity: number;
@@ -65,6 +80,7 @@ export interface CoffeeCooperative {
   treeCount?: number;
   productionHistory?: ProductionYear[];
   households?: number;
+  eudrCompliance?: EudrCompliance;
 }
 
 export const MOCK_COOPERATIVES: CoffeeCooperative[] = [

@@ -35,3 +35,20 @@ export const CooperativeSchema = z.object({
 });
 
 export type CooperativeFormData = z.infer<typeof CooperativeSchema>;
+
+// Validates the eudrCompliance object pasted by an admin from the tools/eudr
+// script output. Mirrors isValidEudrCompliance() in firestore.rules — keep
+// both in sync. `.strict()` rejects unexpected keys so nothing else can ride
+// along into the cooperative doc.
+export const EudrComplianceSchema = z.object({
+  scorePercent: z.number().min(0).max(100),
+  totalFarms: z.number().int().min(0),
+  farmsWithGps: z.number().int().min(0),
+  oversizedFarmsMissingPolygon: z.boolean(),
+  computedAt: z.string().max(40),
+  sourceFileHash: z.string().regex(/^[0-9a-f]{64}$/, 'Must be a SHA-256 hex hash'),
+  sourceFileName: z.string().max(200),
+  scriptVersion: z.string().max(40),
+}).strict().refine(d => d.farmsWithGps <= d.totalFarms, {
+  message: 'farmsWithGps cannot exceed totalFarms',
+});
