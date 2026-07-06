@@ -8,11 +8,12 @@ import {
   Coffee, Users, MapPin, Calendar, Award,
   TrendingUp, Leaf, Scale, ChevronRight, X,
   ArrowLeftRight, Info, DollarSign, Globe, Languages,
-  Plus, Upload, LogIn, LogOut, Shield, User as UserIcon, Loader2, Check, Search, Filter, Download, Edit, Trash2, Mail, Share2, QrCode, Printer, AlertCircle
+  Plus, Upload, LogIn, LogOut, Shield, User as UserIcon, Loader2, Check, Search, Filter, Download, Edit, Trash2, Mail, Share2, QrCode, Printer, AlertCircle,
+  ShieldCheck, ShieldAlert
 } from 'lucide-react';
 import { QRCodeSVG } from 'qrcode.react';
 import { motion, AnimatePresence } from 'motion/react';
-import { MOCK_COOPERATIVES, CoffeeCooperative, EditionParticipant, BestOfCongoEdition } from './types';
+import { MOCK_COOPERATIVES, CoffeeCooperative, EditionParticipant, BestOfCongoEdition, EudrCompliance } from './types';
 import { cn } from './lib/utils';
 import { auth, db } from './firebase';
 import { type User as FirebaseUser } from 'firebase/auth';
@@ -25,7 +26,8 @@ import Markdown from 'react-markdown';
 import toast, { Toaster } from 'react-hot-toast';
 import * as z from 'zod';
 import { handleFirestoreError, OperationType } from './lib/firestore-utils';
-import { CooperativeSchema, type CooperativeFormData } from './schemas';
+import { CooperativeSchema, EudrComplianceSchema, type CooperativeFormData } from './schemas';
+import { sanitizeStagingData } from './lib/staging';
 import { LanguageContext, useTranslation, LanguageSwitcher, translations, type Language } from './contexts/language';
 import { AuthContext, useAuth, useAuthProvider } from './contexts/auth';
 import { isAdmin, canAccessStaging, canAccessBocAdmin, canAccessPortal, canDeleteCooperative } from './lib/permissions';
@@ -675,8 +677,145 @@ const ComparisonView = ({ selectedIds, onRemove, onAdd, cooperatives }: { select
   );
 };
 
+// --- EUDR badge (public detail view) ---
+// Three states by design: no field -> renders nothing at all (49+ coops have
+// no data); complete -> "ready"; anything else -> honest "incomplete", never
+// hidden. Wording is legally scoped: geolocation readiness only.
+const EudrBadge = ({ eudr }: { eudr?: EudrCompliance }) => {
+  const { t, lang } = useTranslation();
+  if (!eudr) return null;
+  const ready = eudr.scorePercent === 100 && !eudr.oversizedFarmsMissingPolygon;
+  const computedDate = new Date(eudr.computedAt);
+  const asOf = isNaN(computedDate.getTime())
+    ? eudr.computedAt
+    : computedDate.toLocaleDateString(lang === 'fr' ? 'fr-FR' : 'en-GB',
+        { year: 'numeric', month: 'short', day: 'numeric' });
+  return (
+    <div className="bg-white rounded-2xl border border-stone-200 p-5">
+      <h3 className="text-xs font-black text-stone-400 uppercase tracking-widest mb-3">{t('eudrTitle')}</h3>
+      <div className={cn(
+        "flex items-center gap-3 rounded-xl border p-3",
+        ready ? "bg-emerald-50 border-emerald-200" : "bg-amber-50 border-amber-200"
+      )}>
+        {ready
+          ? <ShieldCheck size={28} className="text-emerald-600 flex-shrink-0" />
+          : <ShieldAlert size={28} className="text-amber-600 flex-shrink-0" />}
+        <div>
+          <p className={cn("text-sm font-black", ready ? "text-emerald-800" : "text-amber-800")}>
+            {ready ? t('eudrReady') : t('eudrIncomplete')}
+          </p>
+          <p className="text-xs text-stone-600 mt-0.5">
+            {eudr.scorePercent}% {t('eudrScoreLabel')} · {eudr.farmsWithGps}/{eudr.totalFarms} {t('eudrFarmsGps')}
+          </p>
+          <p className="text-[11px] text-stone-500 mt-0.5">
+            {t('eudrAsOf')} {asOf} {t('eudrFromFile')} {eudr.sourceFileName}
+          </p>
+        </div>
+      </div>
+      <p className="text-[11px] text-stone-400 leading-snug mt-3">{t('eudrClaimScope')}</p>
+    </div>
+  );
+};
+
+// --- EUDR admin paste box ---
+// The only write path for eudrCompliance: admin pastes tools/eudr output,
+// Zod validates the shape (mirrors isValidEudrCompliance in firestore.rules),
+// and the write runs under the admin's own auth — no service-account key.
+const EudrAdminBox = ({ cooperatives }: { cooperatives: CoffeeCooperative[] }) => {
+  const { t } = useTranslation();
+  const [coopId, setCoopId] = useState('');
+  const [jsonText, setJsonText] = useState('');
+  const [saving, setSaving] = useState(false);
+  const [status, setStatus] = useState<{ ok: boolean; msg: string } | null>(null);
+
+  const handlePublish = async () => {
+    setStatus(null);
+    if (!coopId) return;
+    let parsed: unknown;
+    try {
+      parsed = JSON.parse(jsonText);
+    } catch (e) {
+      setStatus({ ok: false, msg: `${t('eudrInvalid')} ${(e as Error).message}` });
+      return;
+    }
+    // Accept the full script output file or just its eudrCompliance object.
+    const candidate = (parsed as any)?.eudrCompliance ?? parsed;
+    // The script output names its cooperative; refuse to publish onto a
+    // different coop (wrong-coop paste is silent and buyer-visible). Pasting
+    // just the eudrCompliance object skips this check deliberately.
+    const scriptCoop = (parsed as any)?.context?.cooperative;
+    const selected = cooperatives.find(c => c.id === coopId);
+    if (typeof scriptCoop === 'string' && scriptCoop.trim() && selected &&
+        !selected.name.toLowerCase().includes(scriptCoop.trim().toLowerCase()) &&
+        !scriptCoop.trim().toLowerCase().includes(selected.name.toLowerCase())) {
+      setStatus({ ok: false, msg: `${t('eudrCoopMismatch')} "${scriptCoop}" ≠ "${selected.name}"` });
+      return;
+    }
+    const result = EudrComplianceSchema.safeParse(candidate);
+    if (!result.success) {
+      const detail = result.error.issues
+        .map(i => `${i.path.join('.') || '(root)'}: ${i.message}`).join('; ');
+      setStatus({ ok: false, msg: `${t('eudrInvalid')} ${detail}` });
+      return;
+    }
+    setSaving(true);
+    try {
+      await updateDoc(doc(db, 'cooperatives', coopId), { eudrCompliance: result.data });
+      setStatus({ ok: true, msg: t('eudrSaved') });
+      setJsonText('');
+    } catch (error) {
+      handleFirestoreError(error, OperationType.UPDATE, `cooperatives/${coopId}`);
+      setStatus({ ok: false, msg: String(error) });
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  return (
+    <div className="bg-white rounded-2xl border border-stone-200 p-6 space-y-4">
+      <div className="flex items-center gap-2">
+        <ShieldCheck size={18} className="text-emerald-600" />
+        <h3 className="text-lg font-black text-stone-900">{t('eudrAdminTitle')}</h3>
+      </div>
+      <p className="text-xs text-stone-500">{t('eudrAdminHelp')}</p>
+      <select
+        value={coopId}
+        onChange={e => setCoopId(e.target.value)}
+        className="w-full border border-stone-300 rounded-lg px-3 py-2 text-sm bg-white"
+      >
+        <option value="">{t('eudrSelectCoop')}</option>
+        {cooperatives.map(c => (
+          <option key={c.id} value={c.id}>{c.name}</option>
+        ))}
+      </select>
+      <textarea
+        value={jsonText}
+        onChange={e => setJsonText(e.target.value)}
+        placeholder={t('eudrPaste')}
+        rows={6}
+        spellCheck={false}
+        className="w-full border border-stone-300 rounded-lg px-3 py-2 text-xs font-mono"
+      />
+      {status && (
+        <p className={cn("text-xs font-bold break-words",
+          status.ok ? "text-emerald-700" : "text-red-600")}>
+          {status.msg}
+        </p>
+      )}
+      <button
+        onClick={handlePublish}
+        disabled={saving || !coopId || !jsonText.trim()}
+        className="px-4 py-2 bg-stone-900 text-white rounded-lg text-sm font-bold disabled:opacity-40 flex items-center gap-2"
+      >
+        {saving && <Loader2 size={14} className="animate-spin" />}
+        {t('eudrSave')}
+      </button>
+    </div>
+  );
+};
+
 // --- Staging Area Component ---
-function StagingArea() {
+function StagingArea({ cooperatives }: { cooperatives: CoffeeCooperative[] }) {
   const { t } = useTranslation();
   const [isParsing, setIsParsing] = useState(false);
   const [parsedData, setParsedData] = useState<Partial<CooperativeFormData> | null>(null);
@@ -739,7 +878,7 @@ function StagingArea() {
   const handleApprove = async (stagingId: string, data: any, email?: string) => {
     try {
       await addDoc(collection(db, 'cooperatives'), {
-        ...data,
+        ...sanitizeStagingData(data),
         managerEmail: email || '',
         lastUpdated: serverTimestamp()
       });
@@ -898,6 +1037,8 @@ function StagingArea() {
           </div>
         )}
       </div>
+
+      <EudrAdminBox cooperatives={cooperatives} />
     </div>
   );
 }
@@ -1585,6 +1726,9 @@ function PublicCoopProfile({ coopId }: { coopId: string }) {
             </div>
           </div>
         )}
+
+        {/* EUDR geolocation readiness — renders nothing when no data */}
+        <EudrBadge eudr={coop.eudrCompliance} />
 
         {/* Description */}
         {coop.description && (
@@ -3246,7 +3390,7 @@ function AppContent() {
             />
           </motion.div>
         ) : currentView === 'staging' ? (
-          canAccessStaging(userProfile) ? <StagingArea /> : <p className="text-stone-500">{t('unauthorized')}</p>
+          canAccessStaging(userProfile) ? <StagingArea cooperatives={cooperatives} /> : <p className="text-stone-500">{t('unauthorized')}</p>
         ) : currentView === 'leaderboard' ? (
           <BocLeaderboard
             onCoopSelect={(coopId) => {
@@ -3491,6 +3635,9 @@ function AppContent() {
                         </div>
                       </div>
                     </div>
+
+                    {/* EUDR geolocation readiness — renders nothing when no data */}
+                    <EudrBadge eudr={selectedCoop.eudrCompliance} />
 
                     {/* Tab bar */}
                     <div className="flex gap-1 border-b border-stone-200 -mb-2">
