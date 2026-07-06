@@ -6,3 +6,17 @@ coverage/
 *.log
 .env*
 !.env.example
+.gstack/
+__pycache__/
+.pytest_cache/
+# Real cooperative registries (farmer PII: names, IDs, plot GPS) — never commit.
+# Tests use the synthetic fixture in tools/eudr/tests/.
+data/
+# Generated EUDR outputs (contain real plot coordinates) — regenerate, don't commit.
+reports/
+# Business documents (grant proposals, buyer notes, internal specs) — this repo
+# is public; these stay local by decision (2026-07-05).
+docs/
+TODOS.md
+EUDR_Cooperative_AI_Agent_Prompt.md
+ai_insights_maendeleo.png
