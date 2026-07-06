@@ -10,7 +10,10 @@ npm run dev          # Start dev server on port 3000
 npm run build        # Production build
 npm run lint         # Type-check (tsc --noEmit)
 npm run clean        # Remove dist/
+npm run test:rules   # Full vitest suite inside the Firestore emulator (needs Java 21+)
 ```
+
+**Python tool tests:** `cd tools/eudr && python -m pytest tests/ -q`
 
 **Environment setup:** Copy `.env.example` to `.env.local` and set `GEMINI_API_KEY`.
 
@@ -24,7 +27,10 @@ This is a single-page React + Vite + TypeScript app — a Coffee Cooperative dir
 - **`src/types.ts`** — `CoffeeCooperative` interface + `MOCK_COOPERATIVES` array (seed/fallback data for local development).
 - **`src/firebase.ts`** — Firebase app init; exports `db` (Firestore) and `auth`.
 - **`src/services/geminiService.ts`** — Calls Gemini AI (`gemini-3-flash-preview`) to parse uploaded PDF/image documents into structured cooperative data.
-- **`firestore.rules`** — Security rules with three roles: `admin`, `coop_manager`, `user`.
+- **`firestore.rules`** — Security rules with three roles: `admin`, `coop_manager`, `user`. The `eudrCompliance` map on cooperatives is admin-only on both create and update; the client-side mirror is `EudrComplianceSchema` in `src/schemas.ts` — keep both in sync.
+- **`src/lib/staging.ts`** — Typed field allowlist applied when an admin approves a staged cooperative (approval writes run as admin, so this is the trust boundary for AI-parsed data).
+- **`tools/eudr/`** — Offline Python scorer: RA S13 registry (.xlsx) → EUDR geolocation-readiness badge JSON + data-minimized buyer documents. Real registries (farmer PII) live in gitignored `data/`; tests use a synthetic fixture only.
+- **`tests/`** — Vitest suites; `firestore-rules.test.ts` runs against the Firestore emulator via `npm run test:rules`.
 
 ### Firestore data model
 
