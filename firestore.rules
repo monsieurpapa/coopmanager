@@ -66,6 +66,27 @@ service cloud.firestore {
              (!('bio' in data) || (data.bio is string && data.bio.size() < 500));
     }
 
+    // EUDR readiness summary — admin-written only (see /cooperatives rules).
+    // computedAt/sourceFileHash/etc. come from the tools/eudr script output;
+    // the badge is only trustworthy if coop_managers can never write this map.
+    function isValidEudrCompliance(data) {
+      return data.keys().hasAll(['scorePercent', 'totalFarms', 'farmsWithGps',
+               'oversizedFarmsMissingPolygon', 'computedAt',
+               'sourceFileHash', 'sourceFileName', 'scriptVersion']) &&
+             data.keys().hasOnly(['scorePercent', 'totalFarms', 'farmsWithGps',
+               'oversizedFarmsMissingPolygon', 'computedAt',
+               'sourceFileHash', 'sourceFileName', 'scriptVersion']) &&
+             data.scorePercent is number && data.scorePercent >= 0 && data.scorePercent <= 100 &&
+             data.totalFarms is int && data.totalFarms >= 0 &&
+             data.farmsWithGps is int && data.farmsWithGps >= 0 &&
+             data.farmsWithGps <= data.totalFarms &&
+             data.oversizedFarmsMissingPolygon is bool &&
+             data.computedAt is string && data.computedAt.size() <= 40 &&
+             data.sourceFileHash is string && data.sourceFileHash.size() == 64 &&
+             data.sourceFileName is string && data.sourceFileName.size() <= 200 &&
+             data.scriptVersion is string && data.scriptVersion.size() <= 40;
+    }
+
     function isValidBestOfCongoEdition(data) {
       return data.year is number && data.year >= 2000 && data.year <= 2100 &&
              (!('theme' in data) || (data.theme is string && data.theme.size() <= 500));
@@ -125,9 +146,54 @@ service cloud.firestore {
 
     match /cooperatives/{coopId} {
       allow read: if true;
-      allow create: if (isAdmin() || isCoopManager(coopId)) && isValidCooperative(request.resource.data);
-      allow update: if (isAdmin() || isCoopManager(coopId)) && isValidCooperative(request.resource.data);
+      // eudrCompliance is admin-only on BOTH paths. Guarding update alone is not
+      // enough: a coop_manager can also create this doc (delete-recreate or
+      // pre-assigned cooperativeId), so create must reject the key outright.
+      allow create: if isValidCooperative(request.resource.data) && (
+        (isAdmin() &&
+         (!('eudrCompliance' in request.resource.data) ||
+          isValidEudrCompliance(request.resource.data.eudrCompliance))) ||
+        (isCoopManager(coopId) &&
+         !('eudrCompliance' in request.resource.data))
+      );
+      // Managers may still edit every other field; only a CHANGE to
+      // eudrCompliance is blocked (diff().affectedKeys() ignores fields
+      // resubmitted with identical values, so full-doc saves keep working).
+      allow update: if isValidCooperative(request.resource.data) && (
+        (isAdmin() &&
+         (!('eudrCompliance' in request.resource.data) ||
+          isValidEudrCompliance(request.resource.data.eudrCompliance))) ||
+        (isCoopManager(coopId) &&
+         !request.resource.data.diff(resource.data).affectedKeys().hasAny(['eudrCompliance']))
+      );
       allow delete: if isAdmin();
+    }
+
+    // Buyer sample requests (RequestSampleModal). Buyers are not signed in,
+    // so create is public — but shape-locked and size-bounded so the open
+    // endpoint can't be used to store arbitrary data. Read/manage is admin-only.
+    match /leads/{leadId} {
+      allow create: if
+        request.resource.data.keys().hasOnly(['coopId', 'coopName', 'buyerName',
+          'company', 'country', 'interest', 'quantityKg', 'message',
+          'createdAt', 'status']) &&
+        request.resource.data.keys().hasAll(['coopId', 'coopName', 'buyerName',
+          'company', 'country', 'interest', 'createdAt', 'status']) &&
+        request.resource.data.status == 'new' &&
+        request.resource.data.interest in ['sample', 'contract', 'info'] &&
+        request.resource.data.coopId is string && request.resource.data.coopId.size() <= 128 &&
+        request.resource.data.coopName is string && request.resource.data.coopName.size() <= 200 &&
+        request.resource.data.buyerName is string && request.resource.data.buyerName.size() >= 1 &&
+        request.resource.data.buyerName.size() <= 100 &&
+        request.resource.data.company is string && request.resource.data.company.size() >= 1 &&
+        request.resource.data.company.size() <= 200 &&
+        request.resource.data.country is string && request.resource.data.country.size() >= 1 &&
+        request.resource.data.country.size() <= 100 &&
+        (!('quantityKg' in request.resource.data) ||
+         (request.resource.data.quantityKg is string && request.resource.data.quantityKg.size() <= 50)) &&
+        (!('message' in request.resource.data) ||
+         (request.resource.data.message is string && request.resource.data.message.size() <= 1000));
+      allow read, update, delete: if isAdmin();
     }
 
     match /staging_cooperatives/{stagingId} {
