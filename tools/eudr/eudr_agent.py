@@ -10,7 +10,9 @@ validates plot geolocation against EUDR requirements, and emits:
                          (contains farm ids + coordinates)
   buyer_document.geojson data-minimized FeatureCollection for the buyer's
                          due-diligence filing (plot geolocation, farm_id,
-                         area, product — NO farmer names/gender/age)
+                         area, product — NO farmer names/gender/age;
+                         gps_ready farms only — validator-flagged plots
+                         must never reach a TRACES filing)
   buyer_summary.pdf      one-page human-readable summary, no PII
 
 EUDR notes encoded here:
@@ -43,7 +45,7 @@ from pathlib import Path
 
 import openpyxl
 
-SCRIPT_VERSION = "1.0.0"
+SCRIPT_VERSION = "1.1.0"
 MIN_DECIMALS = 6          # EUDR Art. 2(28) floor for point geolocation
 POLYGON_THRESHOLD_HA = 4.0
 
@@ -337,9 +339,19 @@ def emit_buyer_geojson(farms: list[Farm], out_dir: Path, product: str) -> Path:
     product. Farmer names, gender, and ages deliberately never enter this file.
     Coordinates are emitted as [lon, lat] with 6-decimal rounding, matching the
     EU Information System (TRACES) GeoJSON conventions for point geolocation.
+
+    Only gps_ready farms are included: this file feeds a legal filing, and a
+    plot the validator itself flagged (short precision, out of range, missing)
+    must not be filed by a buyer unaware of the flag. Excluded farms are
+    counted in the top-level metadata; the per-farm detail stays in
+    validation_report.json (admin eyes only).
     """
     features = []
+    excluded = 0
     for farm in farms:
+        if not farm.gps_ready:
+            excluded += 1
+            continue
         for unit in farm.units:
             if unit.lat is None or unit.lon is None:
                 continue
@@ -356,7 +368,17 @@ def emit_buyer_geojson(farms: list[Farm], out_dir: Path, product: str) -> Path:
                     "product": product,
                 },
             })
-    doc = {"type": "FeatureCollection", "features": features}
+    doc = {
+        "type": "FeatureCollection",
+        # Foreign member (RFC 7946 §6.1) — ignored by GeoJSON parsers, read by
+        # humans deciding whether the registry is complete enough to file.
+        "metadata": {
+            "farmsIncluded": len(farms) - excluded,
+            "farmsExcludedNotGpsReady": excluded,
+            "inclusionCriteria": f"all units have an in-range point with >= {MIN_DECIMALS} decimals",
+        },
+        "features": features,
+    }
     path = out_dir / "buyer_document.geojson"
     path.write_text(json.dumps(doc, indent=2), encoding="utf-8")
     return path

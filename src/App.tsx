@@ -814,6 +814,9 @@ const EudrAdminBox = ({ cooperatives }: { cooperatives: CoffeeCooperative[] }) =
   );
 };
 
+// Mirrors the managerEmail check in firestore.rules isValidStaging().
+const MANAGER_EMAIL_RE = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
+
 // --- Staging Area Component ---
 function StagingArea({ cooperatives }: { cooperatives: CoffeeCooperative[] }) {
   const { t } = useTranslation();
@@ -860,31 +863,51 @@ function StagingArea({ cooperatives }: { cooperatives: CoffeeCooperative[] }) {
 
   const handleSave = async () => {
     if (!parsedData) return;
+    const email = managerEmail.trim();
+    if (email && !MANAGER_EMAIL_RE.test(email)) {
+      toast.error(t('invalidManagerEmail'));
+      return;
+    }
     try {
       await addDoc(collection(db, 'staging_cooperatives'), {
         data: parsedData,
-        managerEmail: managerEmail,
+        managerEmail: email,
         status: 'pending',
         uploadedBy: auth.currentUser?.uid,
         createdAt: serverTimestamp()
       });
       setParsedData(null);
       setManagerEmail('');
+      toast.success(t('success'));
     } catch (error) {
       console.error("Error saving to staging", error);
+      toast.error(t('error'));
     }
   };
 
+  // Approval runs AS ADMIN and managerEmail becomes an invite that
+  // isClaimingInvite() will honor, so the confirm must echo the email loudly.
+  // The two writes are batched: a publish whose status update fails would
+  // leave the item pending, and a re-click would duplicate the cooperative.
   const handleApprove = async (stagingId: string, data: any, email?: string) => {
+    const name = data?.name ?? '';
+    const message = email
+      ? t('approveConfirmInvite').replace('{email}', email).replace('{name}', name)
+      : t('approveConfirmNoInvite').replace('{name}', name);
+    if (!window.confirm(message)) return;
     try {
-      await addDoc(collection(db, 'cooperatives'), {
+      const batch = writeBatch(db);
+      batch.set(doc(collection(db, 'cooperatives')), {
         ...sanitizeStagingData(data),
         managerEmail: email || '',
         lastUpdated: serverTimestamp()
       });
-      await updateDoc(doc(db, 'staging_cooperatives', stagingId), { status: 'approved' });
+      batch.update(doc(db, 'staging_cooperatives', stagingId), { status: 'approved' });
+      await batch.commit();
+      toast.success(t('success'));
     } catch (error) {
       console.error("Error approving", error);
+      toast.error(t('error'));
     }
   };
 
@@ -893,6 +916,7 @@ function StagingArea({ cooperatives }: { cooperatives: CoffeeCooperative[] }) {
       await updateDoc(doc(db, 'staging_cooperatives', stagingId), { status: 'rejected' });
     } catch (error) {
       console.error("Error rejecting", error);
+      toast.error(t('error'));
     }
   };
 
@@ -3576,21 +3600,6 @@ function AppContent() {
                                 <Trash2 size={14} />
                                 {t('deleteCooperative')}
                               </button>
-                              {!userProfile?.cooperativeId && (
-                                <button 
-                                  onClick={async (e) => {
-                                    e.stopPropagation();
-                                    if (!user) return;
-                                    const docRef = doc(db, 'users', user.uid);
-                                    await updateDoc(docRef, { cooperativeId: selectedCoop.id });
-                                    toast.success(`You are now the manager of ${selectedCoop.name}. The Cooperative Portal is now accessible in the navigation bar.`);
-                                  }}
-                                  className="flex items-center gap-2 px-4 py-2 bg-amber-600 text-white rounded-xl text-xs font-bold hover:bg-amber-700 transition-all shadow-lg"
-                                >
-                                  <Shield size={14} />
-                                  Claim as Manager (Dev Mode)
-                                </button>
-                              )}
                             </div>
                           )}
                         </div>

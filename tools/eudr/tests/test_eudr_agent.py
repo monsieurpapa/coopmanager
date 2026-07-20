@@ -145,8 +145,8 @@ def test_buyer_geojson_is_data_minimized(outputs):
     _, out = outputs
     doc = json.loads((out / "buyer_document.geojson").read_text(encoding="utf-8"))
     assert doc["type"] == "FeatureCollection"
-    # Units with parseable coords: AA-1, AA-2, AA-4, AA-5, AA-6 x2 = 6 features
-    assert len(doc["features"]) == 6
+    # gps_ready farms only: AA-1, AA-4, AA-5, AA-6 x2 = 5 features
+    assert len(doc["features"]) == 5
     banned = {"operator_name", "gender", "birth_year", "name", "village"}
     for feature in doc["features"]:
         props = feature["properties"]
@@ -155,6 +155,17 @@ def test_buyer_geojson_is_data_minimized(outputs):
         assert "Alice" not in json.dumps(props) and "Test" not in props.get("ProducerName", "")
         lon, lat = feature["geometry"]["coordinates"]
         assert -180 <= lon <= 180 and -90 <= lat <= 90
+
+
+def test_buyer_geojson_excludes_non_gps_ready_farms(outputs):
+    # This file feeds a legal filing: plots the validator flagged (AA-2 short
+    # precision, AA-3 missing coordinate) must never reach TRACES via us.
+    _, out = outputs
+    doc = json.loads((out / "buyer_document.geojson").read_text(encoding="utf-8"))
+    included = {f["properties"]["ProducerName"] for f in doc["features"]}
+    assert included == {"TF-AA-1", "TF-AA-4", "TF-AA-5", "TF-AA-6"}
+    assert doc["metadata"]["farmsIncluded"] == 4
+    assert doc["metadata"]["farmsExcludedNotGpsReady"] == 2
 
 
 def test_validation_report_flags_only_problem_farms(outputs):

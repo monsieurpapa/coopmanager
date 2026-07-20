@@ -262,6 +262,117 @@ describe('leads (buyer sample requests)', () => {
   });
 });
 
+describe('staging_cooperatives create (managerEmail hardening)', () => {
+  const UPLOADER_UID = 'uploader-uid';
+  const uploaderDb = () =>
+    env.authenticatedContext(UPLOADER_UID, { email: 'uploader@example.com' }).firestore();
+  const validStaging = {
+    data: { name: 'Nouvelle Coop' },
+    status: 'pending',
+    uploadedBy: UPLOADER_UID,
+    createdAt: serverTimestamp(),
+  };
+
+  it('any authenticated user can stage a doc without managerEmail', async () => {
+    await assertSucceeds(addDoc(collection(uploaderDb(), 'staging_cooperatives'), validStaging));
+  });
+
+  it('accepts a well-formed managerEmail and the empty string', async () => {
+    await assertSucceeds(
+      addDoc(collection(uploaderDb(), 'staging_cooperatives'),
+        { ...validStaging, managerEmail: 'manager@cooperative.com' })
+    );
+    await assertSucceeds(
+      addDoc(collection(uploaderDb(), 'staging_cooperatives'),
+        { ...validStaging, managerEmail: '' })
+    );
+  });
+
+  it('rejects a malformed managerEmail', async () => {
+    await assertFails(
+      addDoc(collection(uploaderDb(), 'staging_cooperatives'),
+        { ...validStaging, managerEmail: 'not-an-email' })
+    );
+  });
+
+  it('rejects an oversized managerEmail', async () => {
+    await assertFails(
+      addDoc(collection(uploaderDb(), 'staging_cooperatives'),
+        { ...validStaging, managerEmail: `${'a'.repeat(250)}@example.com` })
+    );
+  });
+
+  it('rejects extra top-level keys (shape lock)', async () => {
+    await assertFails(
+      addDoc(collection(uploaderDb(), 'staging_cooperatives'),
+        { ...validStaging, eudrCompliance: validEudr })
+    );
+  });
+
+  it('rejects uploadedBy pointing at someone else', async () => {
+    await assertFails(
+      addDoc(collection(uploaderDb(), 'staging_cooperatives'),
+        { ...validStaging, uploadedBy: 'another-uid' })
+    );
+  });
+});
+
+describe('users cooperativeId (invite claim is the only self-service path)', () => {
+  const PLAIN_UID = 'plain-user-uid';
+  const PLAIN_EMAIL = 'invitee@example.com';
+  const plainDb = () =>
+    env.authenticatedContext(PLAIN_UID, { email: PLAIN_EMAIL }).firestore();
+
+  beforeEach(async () => {
+    await env.withSecurityRulesDisabled(async (ctx) => {
+      await setDoc(doc(ctx.firestore(), 'users', PLAIN_UID), {
+        email: PLAIN_EMAIL,
+        role: 'user',
+      });
+    });
+  });
+
+  it('owner cannot self-assign cooperativeId alone', async () => {
+    await assertFails(
+      updateDoc(doc(plainDb(), 'users', PLAIN_UID), { cooperativeId: COOP_ID })
+    );
+  });
+
+  it('owner can still edit plain profile fields', async () => {
+    await assertSucceeds(
+      updateDoc(doc(plainDb(), 'users', PLAIN_UID), { displayName: 'Invitee' })
+    );
+  });
+
+  it('invite claim works when the cooperative names their email', async () => {
+    await env.withSecurityRulesDisabled(async (ctx) => {
+      await updateDoc(doc(ctx.firestore(), 'cooperatives', COOP_ID), {
+        managerEmail: PLAIN_EMAIL,
+      });
+    });
+    await assertSucceeds(
+      updateDoc(doc(plainDb(), 'users', PLAIN_UID), {
+        role: 'coop_manager',
+        cooperativeId: COOP_ID,
+      })
+    );
+  });
+
+  it('invite claim fails when the cooperative names a different email', async () => {
+    await env.withSecurityRulesDisabled(async (ctx) => {
+      await updateDoc(doc(ctx.firestore(), 'cooperatives', COOP_ID), {
+        managerEmail: 'someone-else@example.com',
+      });
+    });
+    await assertFails(
+      updateDoc(doc(plainDb(), 'users', PLAIN_UID), {
+        role: 'coop_manager',
+        cooperativeId: COOP_ID,
+      })
+    );
+  });
+});
+
 describe('public read', () => {
   it('signed-out visitors can read a cooperative (badge is public)', async () => {
     const db = env.unauthenticatedContext().firestore();

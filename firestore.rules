@@ -52,11 +52,19 @@ service cloud.firestore {
              data.members is int && data.members >= 0;
     }
 
+    // managerEmail is validated here because approval copies it into the new
+    // cooperative doc, where isClaimingInvite() treats it as an invite: an
+    // unconstrained value would let any authenticated user stage a coop with
+    // their own email and ride one admin approval into coop_manager.
     function isValidStaging(data) {
       return data.keys().hasAll(['data', 'status', 'uploadedBy', 'createdAt']) &&
+             data.keys().hasOnly(['data', 'status', 'uploadedBy', 'createdAt', 'managerEmail']) &&
              data.data is map &&
              data.data.name is string && data.data.name.size() > 0 &&
-             data.status == 'pending';
+             data.status == 'pending' &&
+             (!('managerEmail' in data) || data.managerEmail == '' ||
+              (data.managerEmail is string && data.managerEmail.size() <= 254 &&
+               data.managerEmail.matches('[^\\s@]+@[^\\s@]+\\.[^\\s@]+')));
     }
 
     function isValidUser(data) {
@@ -123,10 +131,13 @@ service cloud.firestore {
       allow update: if
         // Admins can edit any user doc, but the result must still be valid.
         (isAdmin() && isValidUser(request.resource.data)) ||
-        // Owners can edit their own profile fields, but never role or email.
+        // Owners can edit their own profile fields, but never role, email, or
+        // cooperativeId — the invite-claim branch below is the only self-service
+        // path that may attach a cooperative.
         (isOwner(userId) && isValidUser(request.resource.data) &&
          request.resource.data.role == resource.data.role &&
-         request.resource.data.email == resource.data.email) ||
+         request.resource.data.email == resource.data.email &&
+         !request.resource.data.diff(resource.data).affectedKeys().hasAny(['cooperativeId'])) ||
         // One-time bootstrap: the founder account claims role 'admin' on itself.
         (isOwner(userId) && isBootstrapAdminEmail() &&
          resource.data.role != 'admin' &&

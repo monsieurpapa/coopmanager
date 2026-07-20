@@ -23,7 +23,7 @@ python eudr_agent.py --input ../../data/registre_2026-06.xlsx \
 |---|---|---|
 | `eudr_compliance.json` | Admin | Badge summary + provenance (file SHA-256, script version) |
 | `validation_report.json` | **Admin only** | Per-farm errors/warnings — the re-collection worklist. Contains farm ids and GPS diagnostics; never send to buyers. |
-| `buyer_document.geojson` | Buyer (gated) | Data-minimized plot geolocations (farm id, plot id, area, product — **no farmer names/gender/ages**) |
+| `buyer_document.geojson` | Buyer (gated) | Data-minimized plot geolocations (farm id, plot id, area, product — **no farmer names/gender/ages**). **gps_ready farms only** — validator-flagged plots never enter the filing document; excluded-farm counts are in the file's `metadata`. |
 | `buyer_summary.pdf` | Buyer (gated) | One-page readiness summary, no PII |
 
 ## Publishing the badge (admin procedure)
