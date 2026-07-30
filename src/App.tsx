@@ -279,15 +279,15 @@ const ComparisonView = ({ selectedIds, onRemove, onAdd, cooperatives }: { select
   const handleExportCSV = () => {
     if (selectedCoops.length === 0) return;
 
-    const headers = ['Metric', ...selectedCoops.map(c => c.name)];
+    const headers = [t('metric'), ...selectedCoops.map(c => c.name)];
     const rows = [
       ...availableMetrics.map(m => [
         m.label,
         ...selectedCoops.map(c => (c[m.id as keyof CoffeeCooperative] as number || 0).toString())
       ]),
-      ['Region', ...selectedCoops.map(c => c.region)],
-      ['Established', ...selectedCoops.map(c => c.established.toString())],
-      ['Country', ...selectedCoops.map(c => c.country)]
+      [t('region'), ...selectedCoops.map(c => c.region)],
+      [t('established'), ...selectedCoops.map(c => c.established.toString())],
+      [t('country'), ...selectedCoops.map(c => c.country)]
     ];
 
     downloadCsv([headers, ...rows], `cooperative_comparison_${new Date().toISOString().split('T')[0]}.csv`);
@@ -1760,7 +1760,7 @@ function PublicCoopProfile({ coopId }: { coopId: string }) {
           <StatCard icon={Users} label={t('members')} value={coop.members.toLocaleString()} />
           <StatCard icon={Award} label={t('score')} value={coop.selfReportedCuppingScore} />
           <StatCard icon={Scale} label="Altitude" value={formatAltitudeRange(coop.altitudeRange)} unit="m" />
-          <StatCard icon={TrendingUp} label={t('production')} value={coop.annualProduction} unit="T" />
+          <StatCard icon={TrendingUp} label={t('production')} value={coop.annualProduction} unit={t('tons')} />
         </div>
 
         {/* Certifications */}
@@ -3640,26 +3640,26 @@ function AppContent() {
                             href={`mailto:${selectedCoop.managerEmail || ADMIN_EMAIL}?subject=${encodeURIComponent(`Inquiry about ${selectedCoop.name}`)}`}
                             className="px-4 py-2 bg-amber-500/90 backdrop-blur-md border border-amber-400/30 rounded-xl text-xs font-bold text-white hover:bg-amber-500 transition-all flex items-center gap-2"
                           >
-                            <Mail size={14} /> Contact
+                            <Mail size={14} /> {t('contact')}
                           </a>
                           <button
                             onClick={() => {
                               const url = `${window.location.origin}${window.location.pathname}#/coop/${encodeURIComponent(selectedCoop.id)}`;
-                              navigator.clipboard.writeText(url).then(() => toast.success('Profile link copied!')).catch(() => toast.error('Could not copy link'));
+                              navigator.clipboard.writeText(url).then(() => toast.success(t('profileLinkCopied'))).catch(() => toast.error(t('couldNotCopyLink')));
                             }}
                             className="px-4 py-2 bg-white/10 backdrop-blur-md border border-white/20 rounded-xl text-xs font-bold text-white hover:bg-white/20 transition-all flex items-center gap-2"
                           >
-                            <Share2 size={14} /> Share Profile
+                            <Share2 size={14} /> {t('shareProfile')}
                           </button>
                           <button
                             onClick={() => {
                               const safeFilename = selectedCoop.name.replace(/[^a-zA-Z0-9_-]/g, '_');
                               downloadCsv(
                                 [
-                                  [t('metric'), 'Value'],
-                                  ['Name', selectedCoop.name],
-                                  ['Country', selectedCoop.country],
-                                  ['Region', selectedCoop.region],
+                                  [t('metric'), t('value')],
+                                  [t('name'), selectedCoop.name],
+                                  [t('country'), selectedCoop.country],
+                                  [t('region'), selectedCoop.region],
                                   [t('established'), selectedCoop.established],
                                   [t('members'), selectedCoop.members],
                                   [t('cuppingScore'), selectedCoop.selfReportedCuppingScore],
@@ -3693,7 +3693,7 @@ function AppContent() {
                               : "border-transparent text-stone-400 hover:text-stone-700"
                           )}
                         >
-                          {tab === 'overview' ? 'Overview' : 'Best of Congo'}
+                          {tab === 'overview' ? t('overview') : 'Best of Congo'}
                         </button>
                       ))}
                     </div>
@@ -3702,7 +3702,7 @@ function AppContent() {
                     {/* Stats Grid */}
                     <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
                       <StatCard icon={Users} label={t('members')} value={selectedCoop.members.toLocaleString()} />
-                      <StatCard icon={TrendingUp} label={t('production')} value={selectedCoop.annualProduction} unit="Tons" />
+                      <StatCard icon={TrendingUp} label={t('production')} value={selectedCoop.annualProduction} unit={t('tons')} />
                       <StatCard icon={Award} label={t('score')} value={selectedCoop.selfReportedCuppingScore} />
                       <StatCard icon={Scale} label="Altitude" value={formatAltitudeRange(selectedCoop.altitudeRange)} unit="m" />
                     </div>

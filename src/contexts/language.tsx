@@ -152,6 +152,14 @@ export const translations = {
     step4Title: 'Published to the directory',
     step4Desc: 'Approved cooperatives appear in the searchable directory, Best of Congo leaderboard, and comparison engine.',
     close: 'Close',
+    tons: 'Tons',
+    shareProfile: 'Share Profile',
+    profileLinkCopied: 'Profile link copied!',
+    couldNotCopyLink: 'Could not copy link',
+    name: 'Name',
+    country: 'Country',
+    region: 'Region',
+    value: 'Value',
   },
   fr: {
     directory: 'Répertoire',
@@ -301,6 +309,14 @@ export const translations = {
     step4Title: 'Publié dans le répertoire',
     step4Desc: 'Les coopératives approuvées apparaissent dans le répertoire consultable, le classement Best of Congo et le moteur de comparaison.',
     close: 'Fermer',
+    tons: 'Tonnes',
+    shareProfile: 'Partager le Profil',
+    profileLinkCopied: 'Lien du profil copié !',
+    couldNotCopyLink: 'Impossible de copier le lien',
+    name: 'Nom',
+    country: 'Pays',
+    region: 'Région',
+    value: 'Valeur',
   }
 };
 
