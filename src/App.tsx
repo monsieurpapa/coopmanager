@@ -3879,7 +3879,7 @@ function AppContent() {
                 <div className="w-8 h-8 bg-amber-900 rounded-lg flex items-center justify-center text-white">
                   <Coffee size={18} />
                 </div>
-                <h1 className="text-xl font-black tracking-tighter text-stone-900">CongoFarmers</h1>
+                <p className="text-xl font-black tracking-tighter text-stone-900">CongoFarmers</p>
               </div>
               <p className="text-stone-500 text-sm max-w-sm leading-relaxed">
                 {t('platformDesc')}
