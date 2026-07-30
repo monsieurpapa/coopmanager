@@ -13,7 +13,7 @@ import {
 } from 'lucide-react';
 import { QRCodeSVG } from 'qrcode.react';
 import { motion, AnimatePresence } from 'motion/react';
-import { MOCK_COOPERATIVES, CoffeeCooperative, EditionParticipant, BestOfCongoEdition, EudrCompliance } from './types';
+import { MOCK_COOPERATIVES, CoffeeCooperative, EditionParticipant, BestOfCongoEdition, EudrCompliance, SensoryProfile } from './types';
 import { cn } from './lib/utils';
 import { auth, db } from './firebase';
 import { type User as FirebaseUser } from 'firebase/auth';
@@ -124,6 +124,15 @@ function normalizeCooperative(raw: CoffeeCooperative): CoffeeCooperative {
     return { ...raw, selfReportedCuppingScore: raw.averageCuppingScore };
   }
   return raw;
+}
+
+// A cooperative with no cupping panel yet defaults to every sensory value at
+// 0 (see MOCK/reset defaults), which a radar chart can't distinguish from a
+// real panel that scored 0/10 on every axis — misleading for an EU buyer
+// sizing up a coop's quality. Treat all-zero/missing as "not evaluated".
+function hasSensoryData(profile: SensoryProfile | undefined): boolean {
+  if (!profile) return false;
+  return Object.values(profile).some(v => typeof v === 'number' && v > 0);
 }
 
 // --- Components ---
@@ -1782,7 +1791,13 @@ function PublicCoopProfile({ coopId }: { coopId: string }) {
         {/* Sensory profile */}
         <div className="bg-white rounded-2xl border border-stone-200 p-5">
           <h3 className="text-xs font-black text-stone-400 uppercase tracking-widest mb-2">Sensory Profile</h3>
-          <SensoryRadar profile={coop.sensoryProfile} name={coop.name} />
+          {hasSensoryData(coop.sensoryProfile) ? (
+            <SensoryRadar profile={coop.sensoryProfile} name={coop.name} />
+          ) : (
+            <div className="h-[300px] w-full flex items-center justify-center text-center text-sm text-stone-400 px-8">
+              {t('sensoryProfileNotEvaluated')}
+            </div>
+          )}
         </div>
 
         {/* BoC history */}
@@ -3813,15 +3828,23 @@ function AppContent() {
                           <Coffee size={18} className="text-amber-600" />
                           {t('sensoryProfile')}
                         </h3>
-                        <SensoryRadar profile={selectedCoop.sensoryProfile} name={selectedCoop.name} />
-                        <div className="mt-4 grid grid-cols-5 gap-2 text-center">
-                          {Object.entries(selectedCoop.sensoryProfile).map(([key, val]) => (
-                            <div key={key}>
-                              <p className="text-[8px] font-bold text-stone-400 uppercase">{t(key as any)}</p>
-                              <p className="text-sm font-bold text-stone-900">{val}</p>
+                        {hasSensoryData(selectedCoop.sensoryProfile) ? (
+                          <>
+                            <SensoryRadar profile={selectedCoop.sensoryProfile} name={selectedCoop.name} />
+                            <div className="mt-4 grid grid-cols-5 gap-2 text-center">
+                              {Object.entries(selectedCoop.sensoryProfile).map(([key, val]) => (
+                                <div key={key}>
+                                  <p className="text-[8px] font-bold text-stone-400 uppercase">{t(key as any)}</p>
+                                  <p className="text-sm font-bold text-stone-900">{val}</p>
+                                </div>
+                              ))}
                             </div>
-                          ))}
-                        </div>
+                          </>
+                        ) : (
+                          <div className="h-[300px] w-full flex items-center justify-center text-center text-sm text-stone-400 px-8">
+                            {t('sensoryProfileNotEvaluated')}
+                          </div>
+                        )}
                       </div>
                     </div>
                     </>)}
