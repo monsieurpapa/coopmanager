@@ -50,6 +50,15 @@ function matchesKind(value: unknown, kind: FieldKind): boolean {
   }
 }
 
+// Gemini emits `averageCuppingScore` (matches the staging doc and this
+// allowlist), but the published /cooperatives schema and every render site
+// read `selfReportedCuppingScore` — approving a staged doc without renaming
+// left the field permanently unset, showing up live as a blank "SCORE" stat
+// and an empty "pts" badge on every AI-staged cooperative.
+const FIELD_RENAMES: Record<string, string> = {
+  averageCuppingScore: 'selfReportedCuppingScore',
+};
+
 export function sanitizeStagingData(data: unknown): Record<string, unknown> {
   const sanitized: Record<string, unknown> = {};
   if (data === null || typeof data !== 'object') return sanitized;
@@ -57,7 +66,7 @@ export function sanitizeStagingData(data: unknown): Record<string, unknown> {
   for (const [field, kind] of Object.entries(APPROVED_STAGING_FIELDS)) {
     const value = record[field];
     if (value !== undefined && value !== null && matchesKind(value, kind)) {
-      sanitized[field] = value;
+      sanitized[FIELD_RENAMES[field] ?? field] = value;
     }
   }
   return sanitized;

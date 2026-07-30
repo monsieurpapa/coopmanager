@@ -68,6 +68,10 @@ export interface CoffeeCooperative {
   certifications: string[];
   annualProduction: number; // in tons
   selfReportedCuppingScore: number;
+  /** Legacy field name on cooperatives approved before the staging-sanitizer
+   *  rename (see FIELD_RENAMES in src/lib/staging.ts). Read-only fallback for
+   *  already-published docs; new approvals never write this field. */
+  averageCuppingScore?: number;
   commodity?: 'coffee' | 'cocoa';
   managerEmail?: string;
   isBocParticipant?: boolean;

@@ -114,6 +114,18 @@ function formatAltitudeRange(range: readonly [number, number] | undefined): stri
   return `${range[0]}–${range[1]}`;
 }
 
+// Cooperatives approved before the staging-sanitizer rename (see FIELD_RENAMES
+// in src/lib/staging.ts) were published with `averageCuppingScore` instead of
+// `selfReportedCuppingScore`, leaving every score/pts display blank. Backfill
+// at read time so already-published docs render correctly without a data
+// migration.
+function normalizeCooperative(raw: CoffeeCooperative): CoffeeCooperative {
+  if (raw.selfReportedCuppingScore === undefined && raw.averageCuppingScore !== undefined) {
+    return { ...raw, selfReportedCuppingScore: raw.averageCuppingScore };
+  }
+  return raw;
+}
+
 // --- Components ---
 
 const StatCard = ({ icon: Icon, label, value, unit = "" }: { icon: any, label: string, value: string | number, unit?: string }) => (
@@ -996,7 +1008,7 @@ function StagingArea({ cooperatives }: { cooperatives: CoffeeCooperative[] }) {
               </div>
               <div>
                 <p className="text-[10px] font-bold text-stone-400 uppercase tracking-widest mb-1">Cupping Score</p>
-                <p className="font-bold text-amber-600">{parsedData.selfReportedCuppingScore}</p>
+                <p className="font-bold text-amber-600">{parsedData.selfReportedCuppingScore ?? (parsedData as Record<string, unknown>).averageCuppingScore as number | undefined}</p>
               </div>
             </div>
             <div>
@@ -1122,7 +1134,7 @@ function CoopPortal({ coopId, isNew = false, onComplete, canDelete = false }: { 
     const path = `cooperatives/${coopId}`;
     return onSnapshot(doc(db, 'cooperatives', coopId), (snap) => {
       if (snap.exists()) {
-        const data = snap.data();
+        const data = normalizeCooperative(snap.data() as CoffeeCooperative);
         setCoop(data);
         reset(data as any);
         setVarietiesText((data.varieties ?? []).join(', '));
@@ -1632,7 +1644,7 @@ function PublicCoopProfile({ coopId }: { coopId: string }) {
     getDoc(doc(db, 'cooperatives', coopId))
       .then(snap => {
         if (snap.exists()) {
-          setCoop({ id: snap.id, ...snap.data() } as CoffeeCooperative);
+          setCoop(normalizeCooperative({ id: snap.id, ...snap.data() } as CoffeeCooperative));
         } else {
           setNotFound(true);
         }
@@ -3220,7 +3232,7 @@ function AppContent() {
   useEffect(() => {
     const path = 'cooperatives';
     const unsubscribe = onSnapshot(collection(db, 'cooperatives'), (snapshot) => {
-      const dbCoops = snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() } as CoffeeCooperative));
+      const dbCoops = snapshot.docs.map(doc => normalizeCooperative({ id: doc.id, ...doc.data() } as CoffeeCooperative));
       if (import.meta.env.DEV) {
         setCooperatives([...MOCK_COOPERATIVES, ...dbCoops]);
       } else {

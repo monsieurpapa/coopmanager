@@ -23,7 +23,15 @@ describe('sanitizeStagingData', () => {
     for (const [field, kind] of Object.entries(APPROVED_STAGING_FIELDS)) {
       input[field] = typedValue(kind, field);
     }
-    expect(sanitizeStagingData(input)).toEqual(input);
+    const expected: Record<string, unknown> = { ...input, selfReportedCuppingScore: input.averageCuppingScore };
+    delete expected.averageCuppingScore;
+    expect(sanitizeStagingData(input)).toEqual(expected);
+  });
+
+  it('renames averageCuppingScore to selfReportedCuppingScore on approve', () => {
+    const out = sanitizeStagingData({ name: 'Maendeleo', averageCuppingScore: 85.5 });
+    expect(out).toEqual({ name: 'Maendeleo', selfReportedCuppingScore: 85.5 });
+    expect(out).not.toHaveProperty('averageCuppingScore');
   });
 
   it('strips eudrCompliance injected into a staging doc', () => {
