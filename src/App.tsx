@@ -3676,9 +3676,9 @@ function AppContent() {
                     </div>
 
                     {/* Detailed Metrics (Real Data Additions) */}
-                    {(selectedCoop.menMembers || selectedCoop.areaHa || selectedCoop.households) && (
+                    {(!!selectedCoop.menMembers || !!selectedCoop.areaHa || !!selectedCoop.households) && (
                       <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-                        {selectedCoop.menMembers && selectedCoop.womenMembers && (
+                        {!!selectedCoop.menMembers && !!selectedCoop.womenMembers && (
                           <div className="bg-white p-6 rounded-2xl border border-stone-200 shadow-sm">
                             <h4 className="text-xs font-bold text-stone-400 uppercase tracking-widest mb-4">{t('genderDistribution')}</h4>
                             <div className="flex items-center gap-4">
@@ -3699,7 +3699,7 @@ function AppContent() {
                                 </div>
                               </div>
                             </div>
-                            {selectedCoop.youthMembers && (
+                            {!!selectedCoop.youthMembers && (
                               <div className="mt-4 pt-4 border-t border-stone-100 flex items-center justify-between">
                                 <span className="text-[10px] font-bold text-stone-400 uppercase">{t('youthRepresentation')}</span>
                                 <span className="text-xs font-bold text-amber-600">{Math.round((selectedCoop.youthMembers / selectedCoop.members) * 100)}%</span>
@@ -3707,7 +3707,7 @@ function AppContent() {
                             )}
                           </div>
                         )}
-                        {selectedCoop.households && (
+                        {!!selectedCoop.households && (
                           <div className="bg-white p-6 rounded-2xl border border-stone-200 shadow-sm">
                             <h4 className="text-xs font-bold text-stone-400 uppercase tracking-widest mb-4">{t('socialImpact')}</h4>
                             <div className="flex items-center gap-4">
@@ -3721,7 +3721,7 @@ function AppContent() {
                             </div>
                           </div>
                         )}
-                        {selectedCoop.areaHa && (
+                        {!!selectedCoop.areaHa && (
                           <div className="bg-white p-6 rounded-2xl border border-stone-200 shadow-sm">
                             <h4 className="text-xs font-bold text-stone-400 uppercase tracking-widest mb-4">{t('productionCapacity')}</h4>
                             <div className="grid grid-cols-2 gap-4">
@@ -3729,7 +3729,7 @@ function AppContent() {
                                 <p className="text-[10px] text-stone-400 uppercase">{t('totalArea')}</p>
                                 <p className="text-lg font-bold">{selectedCoop.areaHa} <span className="text-xs font-normal">HA</span></p>
                               </div>
-                              {selectedCoop.treeCount && (
+                              {!!selectedCoop.treeCount && (
                                 <div>
                                   <p className="text-[10px] text-stone-400 uppercase">{t('coffeeTrees')}</p>
                                   <p className="text-lg font-bold">{selectedCoop.treeCount.toLocaleString()}</p>
@@ -3742,7 +3742,7 @@ function AppContent() {
                     )}
 
                     {/* Production Trends */}
-                    {selectedCoop.productionHistory && (
+                    {!!selectedCoop.productionHistory && selectedCoop.productionHistory.length > 0 && (
                       <div className="bg-white p-6 rounded-2xl border border-stone-200 shadow-sm">
                         <h3 className="text-lg font-bold mb-6 flex items-center gap-2">
                           <TrendingUp size={20} className="text-amber-600" />
