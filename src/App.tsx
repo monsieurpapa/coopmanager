@@ -109,6 +109,11 @@ function downloadCsv(rows: unknown[][], filename: string) {
   URL.revokeObjectURL(url);
 }
 
+function formatAltitudeRange(range: readonly [number, number] | undefined): string {
+  if (!range || !Number.isFinite(range[0]) || !Number.isFinite(range[1])) return '—';
+  return `${range[0]}–${range[1]}`;
+}
+
 // --- Components ---
 
 const StatCard = ({ icon: Icon, label, value, unit = "" }: { icon: any, label: string, value: string | number, unit?: string }) => (
@@ -1733,7 +1738,7 @@ function PublicCoopProfile({ coopId }: { coopId: string }) {
         <div className="grid grid-cols-2 gap-3">
           <StatCard icon={Users} label={t('members')} value={coop.members.toLocaleString()} />
           <StatCard icon={Award} label={t('score')} value={coop.selfReportedCuppingScore} />
-          <StatCard icon={Scale} label="Altitude" value={`${coop.altitudeRange[0]}–${coop.altitudeRange[1]}`} unit="m" />
+          <StatCard icon={Scale} label="Altitude" value={formatAltitudeRange(coop.altitudeRange)} unit="m" />
           <StatCard icon={TrendingUp} label={t('production')} value={coop.annualProduction} unit="T" />
         </div>
 
@@ -3672,7 +3677,7 @@ function AppContent() {
                       <StatCard icon={Users} label={t('members')} value={selectedCoop.members.toLocaleString()} />
                       <StatCard icon={TrendingUp} label={t('production')} value={selectedCoop.annualProduction} unit="Tons" />
                       <StatCard icon={Award} label={t('score')} value={selectedCoop.selfReportedCuppingScore} />
-                      <StatCard icon={Scale} label="Altitude" value={`${selectedCoop.altitudeRange[0]}-${selectedCoop.altitudeRange[1]}`} unit="m" />
+                      <StatCard icon={Scale} label="Altitude" value={formatAltitudeRange(selectedCoop.altitudeRange)} unit="m" />
                     </div>
 
                     {/* Detailed Metrics (Real Data Additions) */}
