@@ -2978,7 +2978,7 @@ function FacetedFilterPanel({
         <button
           onClick={() => setOpen(o => !o)}
           className={cn(
-            "p-2 rounded-xl border transition-all flex items-center gap-1 text-xs font-bold",
+            "p-2 min-w-[44px] min-h-[44px] rounded-xl border transition-all flex items-center justify-center gap-1 text-xs font-bold",
             open || hasActiveFilters
               ? "bg-amber-600 text-white border-amber-600"
               : "bg-white text-stone-500 border-stone-200 hover:border-stone-300"
@@ -3304,7 +3304,7 @@ function AppContent() {
               <button 
                 onClick={() => { setCurrentView('directory'); setPortalCoopId(null); }}
                 className={cn(
-                  "px-4 py-2 rounded-full text-sm font-bold transition-all",
+                  "px-4 py-3 rounded-full text-sm font-bold transition-all",
                   currentView === 'directory' ? "bg-stone-100 text-stone-900" : "text-stone-500 hover:text-stone-900"
                 )}
               >
@@ -3313,7 +3313,7 @@ function AppContent() {
               <button
                 onClick={() => { setCurrentView('comparison'); setPortalCoopId(null); }}
                 className={cn(
-                  "px-4 py-2 rounded-full text-sm font-bold transition-all flex items-center gap-2",
+                  "px-4 py-3 rounded-full text-sm font-bold transition-all flex items-center gap-2",
                   currentView === 'comparison' ? "bg-stone-100 text-stone-900" : "text-stone-500 hover:text-stone-900"
                 )}
               >
@@ -3327,7 +3327,7 @@ function AppContent() {
               <button
                 onClick={() => { setCurrentView('leaderboard'); setPortalCoopId(null); }}
                 className={cn(
-                  "px-4 py-2 rounded-full text-sm font-bold transition-all flex items-center gap-2",
+                  "px-4 py-3 rounded-full text-sm font-bold transition-all flex items-center gap-2",
                   currentView === 'leaderboard' ? "bg-stone-100 text-stone-900" : "text-stone-500 hover:text-stone-900"
                 )}
               >
@@ -3336,7 +3336,7 @@ function AppContent() {
               </button>
               <button
                 onClick={() => setIsAboutOpen(true)}
-                className="px-4 py-2 rounded-full text-sm font-bold transition-all text-stone-500 hover:text-stone-900 flex items-center gap-2"
+                className="px-4 py-3 rounded-full text-sm font-bold transition-all text-stone-500 hover:text-stone-900 flex items-center gap-2"
               >
                 <Info size={14} />
                 {t('about')}
@@ -3345,7 +3345,7 @@ function AppContent() {
                 <button
                   onClick={() => { setCurrentView('staging'); setPortalCoopId(null); }}
                   className={cn(
-                    "px-4 py-2 rounded-full text-sm font-bold transition-all flex items-center gap-2",
+                    "px-4 py-3 rounded-full text-sm font-bold transition-all flex items-center gap-2",
                     currentView === 'staging' ? "bg-stone-100 text-stone-900" : "text-stone-500 hover:text-stone-900"
                   )}
                 >
@@ -3357,7 +3357,7 @@ function AppContent() {
                 <button
                   onClick={() => { setCurrentView('boc-admin'); setPortalCoopId(null); }}
                   className={cn(
-                    "px-4 py-2 rounded-full text-sm font-bold transition-all flex items-center gap-2",
+                    "px-4 py-3 rounded-full text-sm font-bold transition-all flex items-center gap-2",
                     currentView === 'boc-admin' ? "bg-stone-100 text-stone-900" : "text-stone-500 hover:text-stone-900"
                   )}
                 >
@@ -3369,7 +3369,7 @@ function AppContent() {
                 <button
                   onClick={() => { setCurrentView('portal'); setPortalCoopId(null); }}
                   className={cn(
-                    "px-4 py-2 rounded-full text-sm font-bold transition-all flex items-center gap-2",
+                    "px-4 py-3 rounded-full text-sm font-bold transition-all flex items-center gap-2",
                     currentView === 'portal' ? "bg-stone-100 text-stone-900" : "text-stone-500 hover:text-stone-900"
                   )}
                 >
@@ -3406,9 +3406,9 @@ function AppContent() {
                 />
               </div>
             ) : (
-              <button 
+              <button
                 onClick={handleLogin}
-                className="flex items-center gap-2 px-4 py-2 bg-stone-900 text-white rounded-xl text-sm font-bold hover:bg-stone-800 transition-all"
+                className="flex items-center gap-2 px-4 py-3 bg-stone-900 text-white rounded-xl text-sm font-bold hover:bg-stone-800 transition-all"
               >
                 <LogIn size={16} />
                 {t('login')}
@@ -3887,19 +3887,19 @@ function AppContent() {
             </div>
             <div>
               <h4 className="text-xs font-black text-stone-400 uppercase tracking-widest mb-4">{t('platform')}</h4>
-              <ul className="space-y-2 text-sm font-bold text-stone-600">
-                <li><button onClick={() => setCurrentView('directory')} className="hover:text-amber-700">{t('directory')}</button></li>
-                <li><button onClick={() => setCurrentView('comparison')} className="hover:text-amber-700">{t('comparison')}</button></li>
-                <li className="hover:text-amber-700 cursor-pointer">{t('marketplace')}</li>
-                <li className="hover:text-amber-700 cursor-pointer">{t('impactReports')}</li>
+              <ul className="text-sm font-bold text-stone-600">
+                <li><button onClick={() => setCurrentView('directory')} className="block py-1.5 hover:text-amber-700">{t('directory')}</button></li>
+                <li><button onClick={() => setCurrentView('comparison')} className="block py-1.5 hover:text-amber-700">{t('comparison')}</button></li>
+                <li className="py-1.5 hover:text-amber-700 cursor-pointer">{t('marketplace')}</li>
+                <li className="py-1.5 hover:text-amber-700 cursor-pointer">{t('impactReports')}</li>
               </ul>
             </div>
             <div>
               <h4 className="text-xs font-black text-stone-400 uppercase tracking-widest mb-4">{t('contact')}</h4>
-              <ul className="space-y-2 text-sm font-bold text-stone-600">
-                <li className="hover:text-amber-700 cursor-pointer">{t('support')}</li>
-                <li className="hover:text-amber-700 cursor-pointer">{t('partnerships')}</li>
-                <li className="hover:text-amber-700 cursor-pointer">{t('privacyPolicy')}</li>
+              <ul className="text-sm font-bold text-stone-600">
+                <li className="py-1.5 hover:text-amber-700 cursor-pointer">{t('support')}</li>
+                <li className="py-1.5 hover:text-amber-700 cursor-pointer">{t('partnerships')}</li>
+                <li className="py-1.5 hover:text-amber-700 cursor-pointer">{t('privacyPolicy')}</li>
               </ul>
             </div>
           </div>
