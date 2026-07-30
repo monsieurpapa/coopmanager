@@ -8,7 +8,7 @@ import {
   Coffee, Users, MapPin, Calendar, Award,
   TrendingUp, Leaf, Scale, ChevronRight, X,
   ArrowLeftRight, Info, DollarSign, Globe, Languages,
-  Plus, Upload, LogIn, LogOut, Shield, User as UserIcon, Loader2, Check, Search, Filter, Download, Edit, Trash2, Mail, Share2, QrCode, Printer, AlertCircle,
+  Plus, Upload, LogIn, LogOut, Shield, User as UserIcon, Loader2, Check, Search, Filter, Download, Edit, Trash2, Mail, Share2, QrCode, Printer, AlertCircle, Menu,
   ShieldCheck, ShieldAlert
 } from 'lucide-react';
 import { QRCodeSVG } from 'qrcode.react';
@@ -3203,6 +3203,7 @@ function AppContent() {
   const [comparisonIds, setComparisonIds] = useState<string[]>([]);
   const [isProfileModalOpen, setIsProfileModalOpen] = useState(false);
   const [isAboutOpen, setIsAboutOpen] = useState(false);
+  const [isMobileNavOpen, setIsMobileNavOpen] = useState(false);
   const [currentView, setCurrentView] = useState<'directory' | 'comparison' | 'staging' | 'portal' | 'boc-admin' | 'leaderboard'>('directory');
   const [hoveredCoopId, setHoveredCoopId] = useState<string | null>(null);
   const { user, profile: userProfile, isLoading: isProfileLoading, login: handleLogin, logout: handleLogoutBase } = useAuth();
@@ -3381,6 +3382,14 @@ function AppContent() {
           </div>
 
           <div className="flex items-center gap-4">
+            <button
+              onClick={() => setIsMobileNavOpen(o => !o)}
+              className="md:hidden min-w-[44px] min-h-[44px] flex items-center justify-center rounded-xl text-stone-500 hover:text-stone-900 hover:bg-stone-100 transition-all"
+              aria-label={t('menu')}
+              aria-expanded={isMobileNavOpen}
+            >
+              {isMobileNavOpen ? <X size={20} /> : <Menu size={20} />}
+            </button>
             <LanguageSwitcher />
             {user ? (
               <div className="flex items-center gap-3">
@@ -3416,6 +3425,87 @@ function AppContent() {
             )}
           </div>
         </div>
+
+        {isMobileNavOpen && (
+          <nav className="md:hidden border-t border-stone-200 bg-white px-4 py-2 space-y-1">
+            <button
+              onClick={() => { setCurrentView('directory'); setPortalCoopId(null); setIsMobileNavOpen(false); }}
+              className={cn(
+                "w-full text-left px-4 py-3 min-h-[44px] rounded-xl text-sm font-bold transition-all",
+                currentView === 'directory' ? "bg-stone-100 text-stone-900" : "text-stone-500 hover:text-stone-900"
+              )}
+            >
+              {t('directory')}
+            </button>
+            <button
+              onClick={() => { setCurrentView('comparison'); setPortalCoopId(null); setIsMobileNavOpen(false); }}
+              className={cn(
+                "w-full text-left px-4 py-3 min-h-[44px] rounded-xl text-sm font-bold transition-all flex items-center gap-2",
+                currentView === 'comparison' ? "bg-stone-100 text-stone-900" : "text-stone-500 hover:text-stone-900"
+              )}
+            >
+              {t('comparison')}
+              {comparisonIds.length > 0 && (
+                <span className="w-5 h-5 bg-amber-600 text-white text-[10px] flex items-center justify-center rounded-full">
+                  {comparisonIds.length}
+                </span>
+              )}
+            </button>
+            <button
+              onClick={() => { setCurrentView('leaderboard'); setPortalCoopId(null); setIsMobileNavOpen(false); }}
+              className={cn(
+                "w-full text-left px-4 py-3 min-h-[44px] rounded-xl text-sm font-bold transition-all flex items-center gap-2",
+                currentView === 'leaderboard' ? "bg-stone-100 text-stone-900" : "text-stone-500 hover:text-stone-900"
+              )}
+            >
+              <Award size={14} />
+              Best of Congo
+            </button>
+            <button
+              onClick={() => { setIsAboutOpen(true); setIsMobileNavOpen(false); }}
+              className="w-full text-left px-4 py-3 min-h-[44px] rounded-xl text-sm font-bold transition-all text-stone-500 hover:text-stone-900 flex items-center gap-2"
+            >
+              <Info size={14} />
+              {t('about')}
+            </button>
+            {canAccessStaging(userProfile) && (
+              <button
+                onClick={() => { setCurrentView('staging'); setPortalCoopId(null); setIsMobileNavOpen(false); }}
+                className={cn(
+                  "w-full text-left px-4 py-3 min-h-[44px] rounded-xl text-sm font-bold transition-all flex items-center gap-2",
+                  currentView === 'staging' ? "bg-stone-100 text-stone-900" : "text-stone-500 hover:text-stone-900"
+                )}
+              >
+                <Shield size={14} />
+                {t('stagingArea')}
+              </button>
+            )}
+            {canAccessBocAdmin(userProfile) && (
+              <button
+                onClick={() => { setCurrentView('boc-admin'); setPortalCoopId(null); setIsMobileNavOpen(false); }}
+                className={cn(
+                  "w-full text-left px-4 py-3 min-h-[44px] rounded-xl text-sm font-bold transition-all flex items-center gap-2",
+                  currentView === 'boc-admin' ? "bg-stone-100 text-stone-900" : "text-stone-500 hover:text-stone-900"
+                )}
+              >
+                <Award size={14} />
+                BoC Admin
+              </button>
+            )}
+            {canAccessPortal(userProfile) && (
+              <button
+                onClick={() => { setCurrentView('portal'); setPortalCoopId(null); setIsMobileNavOpen(false); }}
+                className={cn(
+                  "w-full text-left px-4 py-3 min-h-[44px] rounded-xl text-sm font-bold transition-all flex items-center gap-2",
+                  currentView === 'portal' ? "bg-stone-100 text-stone-900" : "text-stone-500 hover:text-stone-900"
+                )}
+              >
+                <UserIcon size={14} />
+                {t('coopPortal')}
+              </button>
+            )}
+          </nav>
+        )}
       </header>
 
       <main className="max-w-7xl mx-auto px-4 py-8 min-h-[calc(100vh-128px)]">
